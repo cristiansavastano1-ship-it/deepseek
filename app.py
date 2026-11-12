@@ -65,7 +65,7 @@ COL_CASA = "#38bdf8"
 COL_TRASF = "#f43f5e"
 
 # ============================================================
-# CSS & HEADER
+# CSS & HEADER (con ottimizzazioni iOS/Mobile)
 # ============================================================
 st.markdown(f"""
 <style>
@@ -87,6 +87,16 @@ html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
 }}
 [data-testid="stMetricValue"] {{ color: {COL_PRIMARIO} !important; font-weight: 700 !important; }}
 div[data-testid="stExpander"] {{ border: 1px solid #1f2937; border-radius: 12px; }}
+
+/* OTTIMIZZAZIONE MOBILE / iOS */
+@media (max-width: 768px) {{
+    .block-container {{ padding-top: 1rem; padding-left: 0.5rem; padding-right: 0.5rem; }}
+    h1 {{ font-size: 1.5rem !important; }}
+    h3 {{ font-size: 1.1rem !important; }}
+    [data-testid="stMetricValue"] {{ font-size: 1.2rem !important; }}
+    .stButton>button {{ width: 100%; }}
+    .stDataFrame {{ font-size: 0.8rem; }}
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -811,7 +821,6 @@ def stats_attese(df, casa, trasf, k=5):
     return out
 
 def ultimi_5_risultati(df, squadra):
-    """Ritorna una stringa con gli ultimi 5 risultati (V, N, P) della squadra."""
     d = df[(df["HomeTeam"] == squadra) | (df["AwayTeam"] == squadra)].sort_values("Date").tail(5)
     res = []
     for r in d.itertuples():
@@ -823,26 +832,13 @@ def ultimi_5_risultati(df, squadra):
     return res
 
 def crea_heatmap(M):
-    # Consideriamo solo i primi 6 gol per non avere una matrice troppo grande
     M_ridotta = M[:6, :6] * 100
     fig = go.Figure(data=go.Heatmap(
-        z=M_ridotta,
-        x=[str(i) for i in range(6)],
-        y=[str(i) for i in range(6)],
-        colorscale='Blues',
-        text=np.round(M_ridotta, 1),
-        texttemplate="%{text}%",
+        z=M_ridotta, x=[str(i) for i in range(6)], y=[str(i) for i in range(6)],
+        colorscale='Blues', text=np.round(M_ridotta, 1), texttemplate="%{text}%",
         hovertemplate="Risultato: %{y}-%{x}<br>Probabilità: %{z:.1f}%<extra></extra>"
     ))
-    fig.update_layout(
-        title="Matrice dei Risultati Esatti",
-        xaxis_title="Gol Trasferta",
-        yaxis_title="Gol Casa",
-        yaxis_autorange="reversed",
-        template="plotly_dark",
-        height=400,
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
+    fig.update_layout(title="Matrice dei Risultati Esatti", xaxis_title="Gol Trasferta", yaxis_title="Gol Casa", yaxis_autorange="reversed", template="plotly_dark", height=400, margin=dict(l=20, r=20, t=40, b=20))
     return fig
 
 def tabella_classifica(df_stag):
@@ -1114,7 +1110,7 @@ with tabs[0]:
         if att_m and att_m.get("div") == div: mostra_analisi(att_m["casa"], att_m["trasf"], att_m["data"], att_m["ora"])
 
 with tabs[1]:
-    st.subheader("📋 Pronostici delle prossime partite")
+    st.subheader("📋 Multipla Builder & Pronostici")
     limite = (oggi_ts + pd.Timedelta(days=10)).strftime("%Y-%m-%d")
     righe_p = []
     for _, riga in calendario.iterrows():
@@ -1123,12 +1119,49 @@ with tabs[1]:
         d_ = distribuzione_live(c_, t_, modello, pesi, M_freq_live, quote_fixtures)
         prp = tabelle_pronostico(d_["M_1x2"], d_["M_gol"], None, None)
         pp_ = prp["p"]; mg_ = mercati(d_["M_gol"]); chiave_g, testo_g, motivo_g = giocata_consigliata(prp, None)
-        g_ = ("Goal", mg_["btts"]) if mg_["btts"] >= 0.5 else ("No Goal", 1 - mg_["btts"])
-        o_ = ("Over 2.5", mg_["over2.5"]) if mg_["over2.5"] >= 0.5 else ("Under 2.5", 1 - mg_["over2.5"])
-        es_ = d_["M_es"].ravel(); ie = int(np.argmax(es_))
-        righe_p.append({"Data": riga["Data"][5:], "Partita": f"{c_} - {t_}", "Quote": "sì" if d_["ancorata"] else "no", "🎯 Giocata": testo_g, "Motivo": motivo_g, "Pronostico 1X2": f"{NOMI_ESITO[prp['pronostico']]} {pp_[prp['pronostico']]*100:.0f}%", "Doppia chance": f"{prp['doppia_best']} {pp_[prp['doppia_best']]*100:.0f}%", "Goal/No Goal": f"{g_[0]} {g_[1]*100:.0f}%", "Over/Under 2.5": f"{o_[0]} {o_[1]*100:.0f}%", "Esatto più probabile": f"{ie // 11}-{ie % 11} ({es_[ie]*100:.0f}%)"})
-    if not righe_p: st.info("Nessuna partita nei prossimi 10 giorni.")
-    else: st.dataframe(pd.DataFrame(righe_p), use_container_width=True, hide_index=True)
+        quota_equa = round(1 / pp_[chiave_g], 2) if pp_[chiave_g] > 0 else 0
+        righe_p.append({
+            "Seleziona": False,
+            "Data": riga["Data"][5:], "Partita": f"{c_} - {t_}", 
+            "🎯 Giocata": NOMI_SCELTA[chiave_g], "Probabilità %": round(pp_[chiave_g]*100, 1), "Quota Equa": quota_equa, 
+            "Motivo": motivo_g, "Quote": "sì" if d_["ancorata"] else "no"
+        })
+    
+    if not righe_p: 
+        st.info("Nessuna partita nei prossimi 10 giorni.")
+    else: 
+        df_p = pd.DataFrame(righe_p)
+        edited_df = st.data_editor(
+            df_p, 
+            column_config={
+                "Seleziona": st.column_config.CheckboxColumn("Aggiungi", default=False),
+                "Probabilità %": st.column_config.NumberColumn(format="%.1f%%"),
+                "Quota Equa": st.column_config.NumberColumn(format="%.2f")
+            },
+            disabled=["Data", "Partita", "🎯 Giocata", "Probabilità %", "Quota Equa", "Motivo", "Quote"],
+            hide_index=True, 
+            use_container_width=True
+        )
+        
+        selected = edited_df[edited_df["Seleziona"] == True]
+        
+        if not selected.empty:
+            st.markdown("---")
+            st.markdown("### 🎫 La tua Multipla")
+            
+            prob_comb = np.prod(selected["Probabilità %"] / 100)
+            quota_tot = np.prod(selected["Quota Equa"])
+            ev = (prob_comb * quota_tot - 1) * 100
+            
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Quota Totale", f"{quota_tot:.2f}")
+            m2.metric("Probabilità Combinata", f"{prob_comb*100:.2f}%")
+            m3.metric("Valore Atteso (EV)", f"{ev:+.1f}%")
+            
+            st.dataframe(selected[["Partita", "🎯 Giocata", "Probabilità %", "Quota Equa"]], use_container_width=True, hide_index=True)
+            
+            if len(selected) >= 4:
+                st.warning("⚠️ Le multiple con molti eventi hanno una probabilità combinata molto bassa: gioca responsabilmente.")
 
 with tabs[2]:
     st.subheader("🏆 Classifica")
@@ -1205,7 +1238,6 @@ with tabs[6]:
     st.subheader("🧮 Calcolatore Kelly")
     c1, c2, c3 = st.columns(3)
     
-    # Precompilazione da match attivo
     p_default = st.session_state.get("kelly_p", 45.0)
     q_default = st.session_state.get("kelly_q", 2.30)
     
