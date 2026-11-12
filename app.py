@@ -1,14 +1,12 @@
-"""
-COMBO MASTER 4.0
-Dixon-Coles onesto. La X emerge quando deve, i mercati variano con la partita,
-i test sono separati dal training.
-"""
+import difflib
 import io
+import json
+import time
 import math
 import re
-import time
 import unicodedata
-import difflib
+import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
 import numpy as np
@@ -24,6 +22,8 @@ from scipy.stats import binom, nbinom, poisson
 # ============================================================
 # CONFIG
 # ============================================================
+st.set_page_config(page_title="Combo Master 4.0", layout="wide", page_icon="⚽")
+
 LEAGUES = {
     "Serie A (Italia)": "I1", "Premier League (Inghilterra)": "E0",
     "La Liga (Spagna)": "SP1", "Bundesliga (Germania)": "D1",
@@ -56,6 +56,8 @@ SOGLIA_FAVORITA_NETTA = 0.55
 SOGLIA_EQUILIBRIO_GAP = 0.08
 SOGLIA_EQUILIBRIO_X = 0.25
 SOGLIA_X_FORZATA = 0.30
+PROB_MIN_DEFAULT = 30
+EDGE_MIN_DEFAULT = 3.0
 
 COL_PRIMARIO = "#38bdf8"
 COL_ACCENTO = "#a855f7"
@@ -63,10 +65,8 @@ COL_CASA = "#38bdf8"
 COL_TRASF = "#f43f5e"
 
 # ============================================================
-# SETUP PAGINA & CSS
+# CSS & HEADER
 # ============================================================
-st.set_page_config(page_title="Combo Master 4", layout="wide", page_icon="⚽")
-
 st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -96,7 +96,7 @@ st.markdown(f"""
             text-align: center; margin-bottom: 20px;
             box-shadow: 0 20px 25px -5px rgba(0,0,0,0.4);">
     <h1 style="color: #f8fafc; font-weight: 800; font-size: 2rem; margin: 0;">
-        ⚽ COMBO MASTER 4
+        ⚽ COMBO MASTER 4.0
     </h1>
     <p style="color: #94a3b8; font-size: 0.95rem; margin-top: 8px;">
         Dixon-Coles onesto · la X emerge quando deve · test separati dal training
@@ -468,7 +468,7 @@ def backtest_cached(div, ridge, halflife, passo, giorno):
     return None if df is None else esegui_backtest_df(df, ridge, halflife, True, passo)
 
 # ============================================================
-# FUNZIONI PER I PRONOSTICI E LA GIOCATA CONSIGLIATA (Modifiche Core)
+# FUNZIONI PER I PRONOSTICI E LA GIOCATA CONSIGLIATA
 # ============================================================
 _ESITI_MASK = {"1": _MASK["p1"], "X": _MASK["px"], "2": _MASK["p2"], "1X": _MASK["p1"] | _MASK["px"], "X2": _MASK["px"] | _MASK["p2"], "12": _MASK["p1"] | _MASK["p2"]}
 _MERC_MASK = {"Goal": _MASK["btts"], "No Goal": ~_MASK["btts"], "Over 1.5": _MASK["over1.5"], "Under 1.5": ~_MASK["over1.5"], "Over 2.5": _MASK["over2.5"], "Under 2.5": ~_MASK["over2.5"], "Over 3.5": _MASK["over3.5"], "Under 3.5": ~_MASK["over3.5"]}
@@ -581,7 +581,7 @@ def tabelle_pronostico(M_1x2, M_gol, freq=None, soglia_x=None):
     return out
 
 # ============================================================
-# TEMPI E TEMPI ESATTI (Sorpresa)
+# TEMPI E TEMPI ESATTI
 # ============================================================
 def tabella_split(df, s=10.0):
     S = np.zeros((11, 11)); pi = 0.45; d = None
@@ -658,7 +658,153 @@ def esatti_per_tempo(M, df, quanti=4):
     return righe
 
 # ============================================================
-# STATISTICHE E DISTRIBUZIONE LIVE
+# FUNZIONI PER TEST E BACKTEST (COMPLETO)
+# ============================================================
+def _ll_bin(p, o):
+    p = np.clip(p, 1e-9, 1 - 1e-9)
+    return float(-np.mean(o * np.log(p) + (1 - o) * np.log(1 - p)))
+
+def _p_mercato(Ms, chiave):
+    return (Ms * _MASK[chiave]).sum(axis=(1, 2))
+
+def _vettore_perdita(Mv, chiave, xs, ys, outc, esito):
+    if chiave == "1x2":
+        P = np.stack([_p_mercato(Mv, "p1"), _p_mercato(Mv, "px"), _p_mercato(Mv, "p2")], axis=1)
+        return -np.log(np.clip(P[np.arange(len(esito)), esito], 1e-9, 1))
+    if chiave == "exact":
+        return -np.log(np.clip(Mv[np.arange(len(Mv)), xs, ys], 1e-12, 1))
+    p = np.clip(_p_mercato(Mv, chiave), 1e-9, 1 - 1e-9)
+    o = outc[chiave]
+    return -(o * np.log(p) + (1 - o) * np.log(1 - p))
+
+def esegui_test_completo(df, ridge, halflife, passo, inizio=None):
+    stagioni = sorted(df["Stag"].unique())
+    if len(stagioni) < 2: return None
+    t = inizio if inizio is not None else df.loc[df["Stag"] == stagioni[1], "Date"].min()
+    fine = df["Date"].max()
+    rec = {"Partita": [], "xs": [], "ys": [], "ok": [], "ou_ok": [], "m1x2": [], "mou": [], "min_storia": [], "date": []}
+    Ms = {"Modello": [], "Ancorato": [], "Frequenze": []}
+    while t <= fine:
+        blocco = df[(df["Date"] >= t) & (df["Date"] < t + pd.Timedelta(days=passo))]
+        train = df[(df["Date"] < t) & (df["Date"] >= t - pd.Timedelta(days=FINESTRA_GIORNI))]
+        if len(blocco) and len(train) >= 150:
+            m = adatta_modello(train, t, ridge, halflife, True)
+            cnt = pd.concat([train["HomeTeam"], train["AwayTeam"]]).value_counts()
+            m_freq = matrice_frequenze(train)
+            for _, r in blocco.iterrows():
+                h, a = r["HomeTeam"], r["AwayTeam"]
+                lh, la = lambda_partita(m, h, a)
+                Mb = matrice_punteggi(lh, la, m["rho"])
+                qp, qo = prima_tripla(r, COL_PRESA), prima_coppia(r, COL_OU_PRESA)
+                if qp:
+                    p_o = float(senza_margine(qo)[0]) if qo else None
+                    Ma = matrice_ancorata(senza_margine(qp), p_o, m["rho"], (lh, la))
+                else:
+                    Ma = np.full((11, 11), np.nan)
+                qc, qoc = prima_tripla(r, COL_CHIUSURA), prima_coppia(r, COL_OU_CHIUSURA)
+                rec["Partita"].append(f"{h} - {a}")
+                rec["date"].append(r["Date"])
+                rec["xs"].append(min(int(r["FTHG"]), 10))
+                rec["ys"].append(min(int(r["FTAG"]), 10))
+                rec["ok"].append(bool(qp))
+                rec["ou_ok"].append(bool(qp and qoc))
+                rec["m1x2"].append(senza_margine(qc) if qc else np.full(3, np.nan))
+                rec["mou"].append(float(senza_margine(qoc)[0]) if qoc else np.nan)
+                rec["min_storia"].append(int(min(cnt.get(h, 0), cnt.get(a, 0))))
+                for nome, Mv in {"Modello": Mb, "Ancorato": Ma, "Frequenze": m_freq}.items(): Ms[nome].append(Mv)
+        t += pd.Timedelta(days=passo)
+    if not rec["xs"]: return None
+    out = {k: np.array(v) for k, v in rec.items() if k != "Partita"}
+    out["Partita"] = rec["Partita"]
+    out["Ms"] = {k: np.array(v) for k, v in Ms.items()}
+    return out
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def test_completo_cached(div, ridge, halflife, passo, giorno, versione):
+    df = carica_storico(div, N_STAGIONI_TEST, giorno)
+    return None if df is None else esegui_test_completo(df, ridge, halflife, passo)
+
+def pesi_ottimi(res):
+    xs, ys = res["xs"], res["ys"]
+    esito, outc = _esiti(xs, ys)
+    Mb, Mf = res["Ms"]["Modello"], res["Ms"]["Frequenze"]
+    gol, esatto = {}, {}
+    for w in W_GRID:
+        Mw = w * Mb + (1 - w) * Mf
+        gol[w] = float(np.mean([_vettore_perdita(Mw, k_, xs, ys, outc, esito).mean() for k_ in ("over1.5", "over2.5", "over3.5", "btts")]))
+        esatto[w] = float(_vettore_perdita(Mw, "exact", xs, ys, outc, esito).mean())
+    return {"gol": min(gol, key=gol.get), "esatto": min(esatto, key=esatto.get), "n": len(xs), "auto": True}
+
+def scegli_metodo_margine(df):
+    metodi = ("proporzionale", "potenza", "shin")
+    perdite = {m: {"ap": [], "ch": []} for m in metodi}
+    for _, r in df.iterrows():
+        es = 0 if r["FTHG"] > r["FTAG"] else (1 if r["FTHG"] == r["FTAG"] else 2)
+        qa, qc = prima_tripla(r, COL_PRESA), prima_tripla(r, COL_CHIUSURA)
+        for m in metodi:
+            if qa: perdite[m]["ap"].append(-math.log(max(float(senza_margine(qa, m)[es]), 1e-9)))
+            if qc: perdite[m]["ch"].append(-math.log(max(float(senza_margine(qc, m)[es]), 1e-9)))
+    if len(perdite["proporzionale"]["ap"]) < 100: return "proporzionale", pd.DataFrame()
+    righe = []
+    base = np.array(perdite["proporzionale"]["ap"])
+    for m in metodi:
+        ap = np.array(perdite[m]["ap"]); ch = np.array(perdite[m]["ch"])
+        righe.append({"Metodo": m, "Partite": len(ap), "Log loss apertura": round(float(ap.mean()), 4), "Differenza (± err.)": "" if m == "proporzionale" else _diff_se(ap, base), "Log loss chiusura": round(float(ch.mean()), 4) if len(ch) else None})
+    best = min(metodi, key=lambda m: float(np.mean(perdite[m]["ap"])))
+    d_best = np.array(perdite[best]["ap"]) - base
+    se = d_best.std(ddof=1) / math.sqrt(len(d_best))
+    scelto = best if (best != "proporzionale" and d_best.mean() < 0 and abs(d_best.mean()) >= 1.0 * se) else "proporzionale"
+    tab = pd.DataFrame(righe)
+    tab["Usato dall'app"] = ["sì" if r["Metodo"] == scelto else "" for r in righe]
+    return scelto, tab
+
+@st.cache_data(ttl=6 * 3600, show_spinner="Calcolo pesi dal backtest (solo la prima volta)...")
+def pesi_blend_auto(div, ridge, halflife, giorno):
+    df = carica_storico(div, N_STAGIONI_TEST, giorno)
+    metodo, tab_margine = scegli_metodo_margine(df) if df is not None else ("proporzionale", pd.DataFrame())
+    METODO_MARGINE["m"] = metodo
+    res = esegui_test_completo(df, ridge, halflife, 28) if df is not None else None
+    if res is None or len(res["xs"]) < 100:
+        return {"gol": 0.5, "esatto": 0.75, "n": 0, "auto": False, "metodo_margine": metodo, "tab_margine": tab_margine}
+    w = pesi_ottimi(res)
+    w["metodo_margine"] = metodo; w["tab_margine"] = tab_margine
+    return w
+
+def tabella_scommesse(bt, soglie=(0, 2, 5, 8, 10)):
+    ok = bt[["q1", "qx", "q2"]].notna().all(axis=1)
+    b = bt[ok]
+    if b.empty: return pd.DataFrame()
+    P, Q, M = b[["p1", "px", "p2"]].to_numpy(), b[["q1", "qx", "q2"]].to_numpy(), b[["m1", "mx", "m2"]].to_numpy()
+    y = b["y"].to_numpy(int)
+    edge = P * Q - 1
+    k = edge.argmax(axis=1); e_best = edge[np.arange(len(b)), k]; q_k = Q[np.arange(len(b)), k]
+    profitto = np.where(y == k, q_k - 1, -1.0); clv = q_k * M[np.arange(len(b)), k] - 1
+    righe = []
+    for s in soglie:
+        sel = e_best >= s / 100; n = int(sel.sum())
+        if n == 0: righe.append({"Edge min %": s, "Scommesse": 0, "Vinte %": None, "ROI %": None, "± ROI %": None, "CLV medio %": None}); continue
+        pr, c = profitto[sel], clv[sel]
+        righe.append({"Edge min %": s, "Scommesse": n, "Vinte %": round((y[sel] == k[sel]).mean() * 100, 1), "ROI %": round(pr.mean() * 100, 1), "± ROI %": round(pr.std(ddof=1) / math.sqrt(n) * 100, 1) if n > 1 else None, "CLV medio %": round(float(np.nanmean(c)) * 100, 1) if np.isfinite(c).any() else None})
+    return pd.DataFrame(righe)
+
+def migliori_per_partita(df, min_prob):
+    if df is None or df.empty: return df
+    d = df[df["Prob_Mercato"] >= min_prob]
+    if d.empty: return d
+    return d.loc[d.groupby("Partita")["Edge"].idxmax()].sort_values("Edge", ascending=False)
+
+def riassunto_clv(bt, soglia_pct):
+    ok = bt[["q1", "qx", "q2"]].notna().all(axis=1) & bt[["m1", "mx", "m2"]].notna().all(axis=1)
+    b = bt[ok]
+    if b.empty: return 0, float("nan"), float("nan")
+    P, Q, M = b[["p1", "px", "p2"]].to_numpy(), b[["q1", "qx", "q2"]].to_numpy(), b[["m1", "mx", "m2"]].to_numpy()
+    edge = P * Q - 1; k = edge.argmax(axis=1); sel = edge[np.arange(len(b)), k] >= soglia_pct / 100
+    if sel.sum() < 2: return int(sel.sum()), float("nan"), float("nan")
+    clv = (Q[np.arange(len(b)), k] * M[np.arange(len(b)), k] - 1)[sel]
+    return int(sel.sum()), float(clv.mean() * 100), float(clv.std(ddof=1) / math.sqrt(len(clv)) * 100)
+
+# ============================================================
+# FUNZIONI LIVE
 # ============================================================
 def stats_attese(df, casa, trasf, k=5):
     out = {}
@@ -672,6 +818,17 @@ def stats_attese(df, casa, trasf, k=5):
         out[nome] = (round((sm(dc[h], lega_h) + sm(dt[h], lega_h)) / 2, 1), round((sm(dt[a], lega_a) + sm(dc[a], lega_a)) / 2, 1))
     return out
 
+def tabella_classifica(df_stag):
+    righe = {}
+    for r in df_stag.itertuples():
+        for sq, gf, gs in ((r.HomeTeam, r.FTHG, r.FTAG), (r.AwayTeam, r.FTAG, r.FTHG)):
+            d = righe.setdefault(sq, {"G": 0, "Pt": 0, "GF": 0, "GS": 0})
+            d["G"] += 1; d["GF"] += gf; d["GS"] += gs
+            d["Pt"] += 3 if gf > gs else (1 if gf == gs else 0)
+    if not righe: return pd.DataFrame()
+    out = pd.DataFrame([{"Squadra": sq, "Giocate": v["G"], "Punti": v["Pt"], "Media GF": round(v["GF"] / v["G"], 2), "Media GS": round(v["GS"] / v["G"], 2), "DR": round((v["GF"] - v["GS"]) / v["G"], 2)} for sq, v in righe.items()])
+    return out.sort_values(["Punti", "DR"], ascending=False).reset_index(drop=True)
+
 def distribuzione_live(casa, trasf, modello, pesi, M_freq_live, quote_fixtures):
     lh, la = lambda_partita(modello, casa, trasf)
     Mb = matrice_punteggi(lh, la, modello["rho"])
@@ -683,9 +840,84 @@ def distribuzione_live(casa, trasf, modello, pesi, M_freq_live, quote_fixtures):
     Me = pesi["esatto"] * Mb + (1 - pesi["esatto"]) * M_freq_live
     return {"M_1x2": Mb, "M_gol": Mg, "M_es": Me, "ancorata": False, "fonte": f"modello + frequenze (peso modello: {pesi['gol']*100:.0f}% gol, {pesi['esatto']*100:.0f}% esatti)"}
 
-def pesi_blend_auto(div, ridge, halflife, giorno):
-    # Stima semplificata per far partire l'app velocemente
-    return {"gol": 0.5, "esatto": 0.75, "metodo_margine": "proporzionale", "tab_margine": pd.DataFrame()}
+# ============================================================
+# COPPE EUROPEE
+# ============================================================
+COPPE = {"Champions League": {"file": "cl.txt", "da": 2018}, "Europa League": {"file": "el.txt", "da": 2020}}
+_MESI_COPPE = {m: i + 1 for i, m in enumerate(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])}
+_RE_DATA_COPPA = re.compile(r"^\s{1,4}[A-Z][a-z]{2}\s+([A-Z][a-z]{2})\s+(\d{1,2})(?:\s+(\d{4}))?\s*$")
+_RE_PARTITA_COPPA = re.compile(r"^\s+(?:\d{1,2}:\d{2}\s+)?(.+?)\s+\(([A-Z]{3})\)\s+v\s+(.+?)\s+\(([A-Z]{3})\)\s*(.*?)\s*$")
+_RE_FASE_COPPA = re.compile(r"^[▪•]\s*(.+?)\s*$")
+
+def _parse_coppa_txt(testo, stag):
+    righe, fase, data = [], "", None
+    for linea in testo.replace("\r", "").split("\n"):
+        mf = _RE_FASE_COPPA.match(linea)
+        if mf: fase = mf.group(1); continue
+        md = _RE_DATA_COPPA.match(linea)
+        if md:
+            mese = _MESI_COPPE.get(md.group(1)); giorno_ = int(md.group(2))
+            if not mese: data = None; continue
+            anno = int(md.group(3)) if md.group(3) else (stag if mese >= 7 else stag + 1)
+            try: data = pd.Timestamp(year=anno, month=mese, day=giorno_)
+            except Exception: data = None
+            continue
+        mp = _RE_PARTITA_COPPA.match(linea)
+        if not mp or data is None: continue
+        casa, _pc, trasf, _pt, resto = mp.groups()
+        ft = ht = None
+        m_et = re.search(r"(\d+)-(\d+)\s+a\.e\.t\.\s*\((\d+)-(\d+),\s*(\d+)-(\d+)\)", resto)
+        if m_et:
+            ht = (int(m_et.group(3)), int(m_et.group(4))); ft = (int(m_et.group(5)), int(m_et.group(6)))
+        elif "a.e.t" not in resto:
+            m1 = re.match(r"(\d+)-(\d+)(?:\s*\((\d+)-(\d+)\))?", resto)
+            if m1:
+                ft = (int(m1.group(1)), int(m1.group(2)))
+                ht = (int(m1.group(3)), int(m1.group(4))) if m1.group(3) is not None else None
+        righe.append({"Date": data, "HomeTeam": casa.strip(), "AwayTeam": trasf.strip(), "FTHG": ft[0] if ft else np.nan, "FTAG": ft[1] if ft else np.nan, "HTHG": ht[0] if ht else np.nan, "HTAG": ht[1] if ht else np.nan, "Stag": stag, "Fase": fase})
+    return pd.DataFrame(righe)
+
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def carica_storico_coppa(nome_coppa, giorno):
+    info = COPPE[nome_coppa]; oggi = date.today()
+    anno_corr = oggi.year if oggi.month >= 7 else oggi.year - 1
+    frames, mancanti = [], []
+    for y in range(info["da"], anno_corr + 1):
+        slug = f"{y}-{str(y + 1)[2:]}"
+        url = f"https://raw.githubusercontent.com/openfootball/champions-league/master/{slug}/{info['file']}"
+        try: res = requests.get(url, timeout=TIMEOUT, headers=UA)
+        except Exception as e: mancanti.append(f"{slug} ({type(e).__name__})"); continue
+        if res.status_code != 200 or len(res.text) < 200: mancanti.append(f"{slug} (HTTP {res.status_code})"); continue
+        d = _parse_coppa_txt(res.text, y)
+        if not d.empty and d["FTHG"].notna().sum() >= 10: frames.append(d)
+    if not frames: return None, mancanti
+    return pd.concat(frames, ignore_index=True).sort_values("Date").reset_index(drop=True), mancanti
+
+def elo_interno_coppe(df, k=20.0, vantaggio=60.0, base=1500.0):
+    rating, eh, ea = {}, [], []
+    for r in df.itertuples():
+        a, b = rating.get(r.HomeTeam, base), rating.get(r.AwayTeam, base)
+        eh.append(a); ea.append(b)
+        if pd.isna(r.FTHG): continue
+        e_casa = 1 / (1 + 10 ** (-(a + vantaggio - b) / 400))
+        s = 1.0 if r.FTHG > r.FTAG else (0.5 if r.FTHG == r.FTAG else 0.0)
+        diff = abs(r.FTHG - r.FTAG)
+        mult = 1.0 if diff <= 1 else (1.5 if diff == 2 else (11 + diff) / 8)
+        delta = k * mult * (s - e_casa)
+        rating[r.HomeTeam] = a + delta; rating[r.AwayTeam] = b - delta
+    d = df.copy(); d["EloH"], d["EloA"] = eh, ea; d["EloDiff"] = (d["EloH"] - d["EloA"]) / 400.0
+    return d, rating
+
+def adatta_coppe(df):
+    x, y = df["FTHG"].to_numpy(float), df["FTAG"].to_numpy(float); d = df["EloDiff"].to_numpy(float)
+    gx, gy = gammaln(x + 1), gammaln(y + 1)
+    def nll(p):
+        mu, ha, beta, rho = p
+        lh, la = np.exp(mu + ha + beta * d), np.exp(mu - beta * d)
+        ll = (x * np.log(lh) - lh - gx + y * np.log(la) - la - gy + np.log(np.maximum(1 - lh*la*rho, 1e-6)))
+        return -float(ll.sum())
+    r = minimize(nll, x0=[0.2, 0.2, 0.4, 0.0], method="L-BFGS-B", bounds=[(-2, 2), (-1, 1), (-1, 3), (-0.25, 0.25)])
+    return {"mu": float(r.x[0]), "ha": float(r.x[1]), "beta": float(r.x[2]), "rho": float(r.x[3]), "n": int(len(df))}
 
 # ============================================================
 # UI PRINCIPALE
@@ -704,8 +936,7 @@ div = LEAGUES[campionato]
 giorno = date.today().isoformat()
 
 df_storico = carica_storico(div, N_STAGIONI, giorno)
-if df_storico is None or len(df_storico) < 100:
-    st.warning("Impossibile scaricare lo storico. Riprova tra poco."); st.stop()
+if df_storico is None or len(df_storico) < 100: st.warning("Impossibile scaricare lo storico. Riprova tra poco."); st.stop()
 
 par = parametri_auto(div, giorno)
 modello = modello_corrente(div, par["ridge"], par["halflife"], giorno)
@@ -724,7 +955,7 @@ if fx is not None:
         _q, _qo = prima_tripla(_r, COL_PRESA), prima_coppia(_r, COL_OU_PRESA)
         if _q and _qo: quote_fixtures[(_r["HomeTeam"], _r["AwayTeam"])] = (senza_margine(_q), float(senza_margine(_qo)[0]))
 
-tabs = st.tabs(["📅 Calendario", "📋 Pronostici", "🏆 Classifica", "⚡ Value Finder", "🧪 Backtest", "🧮 Kelly"])
+tabs = st.tabs(["📅 Calendario", "📋 Pronostici", "🏆 Classifica", "⚡ Value Finder", "🧪 Backtest", "🌍 Coppe", "🧮 Kelly"])
 
 def mostra_analisi(casa, trasf, data, ora):
     d = distribuzione_live(casa, trasf, modello, pesi, M_freq_live, quote_fixtures)
@@ -751,13 +982,31 @@ def mostra_analisi(casa, trasf, data, ora):
     eq_1x2 = f"1 {pp['1']*100:.0f}% · X {pp['X']*100:.0f}% · 2 {pp['2']*100:.0f}%"
     emoji = {"alta": "🟢", "media": "🟡", "bassa": "🔴"}[livello]
     
+    # NUOVO BLOCCO CON ALTERNATIVA
+    testo_alternativa = ""
+    if livello == "bassa" or "debole" in motivo_g:
+        alt_dc = pr["doppia_x_best"]
+        p_alt_dc = pp[alt_dc]
+        testo_alternativa = f"""
+**💡 Qual è l'alternativa?** 
+Dato che la favorita è debole (sotto il 55%), giocarla da sola è rischioso. Le alternative più solide sono:
+*   **{NOMI_SCELTA[alt_dc]} al {p_alt_dc*100:.1f}%** (copre il pareggio ed è la doppia più probabile)
+*   **X (Pareggio) al {pp['X']*100:.1f}%** (se credi che la favorita si blocchi)
+*   **12 (Non pareggia) al {pp['12']*100:.1f}%** (se sei sicuro che una delle due vincerà)
+"""
+    elif livello == "media" and chiave_g in ("1X", "X2"):
+         testo_alternativa = f"""
+**💡 Nota:** La partita è equilibrata, quindi la doppia chance ({NOMI_SCELTA[chiave_g]}) è la scelta più intelligente per coprire il pareggio.
+"""
+
     st.success(f"""**{emoji} GIOCATA CONSIGLIATA: {NOMI_SCELTA[chiave_g]}**
 
 _{motivo_g}_
 
 **Probabilità 1X2:** {eq_1x2} — pronostico secco del modello: **{NOMI_ESITO[top]} ({p_top*100:.1f}%)**
 
-**Fiducia:** {livello.upper()}{" · ⚠ squadre senza storico (neopromosse o inizio stagione)" if senza_storico else ""}""")
+**Fiducia:** {livello.upper()}{" · ⚠ squadre senza storico (neopromosse o inizio stagione)" if senza_storico else ""}
+{testo_alternativa}""")
 
     tot_gol = lh + la; gol_lega = sum(gol_attesi(M_freq_live))
     tipo = "più gol del solito" if tot_gol >= gol_lega + 0.3 else ("meno gol del solito" if tot_gol <= gol_lega - 0.3 else "gol nella media")
@@ -795,7 +1044,7 @@ _{motivo_g}_
 
     st.markdown("#### ⏱️ Risultati esatti per tempo (con sorpresa)")
     es_t = esatti_per_tempo(d["M_gol"], df_storico)
-    if es_t: st.dataframe(pd.DataFrame(es_t), width="stretch", hide_index=True)
+    if es_t: st.dataframe(pd.DataFrame(es_t), use_container_width=True, hide_index=True)
     else: st.info("Mancano i dati dei tempi (HTHG/HTAG) per questo campionato.")
 
     st.markdown("#### 🎯 Top 3 Risultati Esatti Finali")
@@ -837,29 +1086,77 @@ with tabs[1]:
         es_ = d_["M_es"].ravel(); ie = int(np.argmax(es_))
         righe_p.append({"Data": riga["Data"][5:], "Partita": f"{c_} - {t_}", "Quote": "sì" if d_["ancorata"] else "no", "🎯 Giocata": testo_g, "Motivo": motivo_g, "Pronostico 1X2": f"{NOMI_ESITO[prp['pronostico']]} {pp_[prp['pronostico']]*100:.0f}%", "Doppia chance": f"{prp['doppia_best']} {pp_[prp['doppia_best']]*100:.0f}%", "Goal/No Goal": f"{g_[0]} {g_[1]*100:.0f}%", "Over/Under 2.5": f"{o_[0]} {o_[1]*100:.0f}%", "Esatto più probabile": f"{ie // 11}-{ie % 11} ({es_[ie]*100:.0f}%)"})
     if not righe_p: st.info("Nessuna partita nei prossimi 10 giorni.")
-    else: st.dataframe(pd.DataFrame(righe_p), width="stretch", hide_index=True)
+    else: st.dataframe(pd.DataFrame(righe_p), use_container_width=True, hide_index=True)
 
 with tabs[2]:
     st.subheader("🏆 Classifica")
-    # (Logica semplificata per far partire l'app)
-    st.write("Classifica calcolata dai risultati più recenti.")
-    df_cls = df_storico[df_storico["Stag"] == df_storico["Stag"].max()]
-    st.dataframe(df_cls.head(10), width="stretch")
+    df_cls = tabella_classifica(df_storico[df_storico["Stag"] == df_storico["Stag"].max()])
+    if not df_cls.empty:
+        st.dataframe(df_cls, use_container_width=True, hide_index=True)
+        st.plotly_chart(px.bar(df_cls, x="Squadra", y="Punti", color="Media GF", template="plotly_dark", title="Punti e Potenziale Offensivo"), use_container_width=True)
+    
+    st.markdown("#### 📊 Forza Squadre secondo il modello")
+    df_f = pd.DataFrame({"Squadra": modello["squadre"], "Attacco": np.round(modello["att"], 3), "Difesa": np.round(-modello["dfn"], 3)})
+    df_f["Totale"] = (df_f["Attacco"] + df_f["Difesa"]).round(3)
+    st.dataframe(df_f.sort_values("Totale", ascending=False), use_container_width=True, hide_index=True)
 
 with tabs[3]:
-    st.subheader("⚡ Value Finder")
-    st.write("Analisi delle quote del prossimo turno rispetto al modello.")
+    st.subheader("⚡ Scanner Value Finder")
+    if fx is None or fx.empty: st.info("Nessuna partita futura con quote.")
+    else:
+        righe_v = []
+        for _, r in fx.iterrows():
+            if "Date" in r and pd.notna(r["Date"]) and r["Date"] < oggi_ts: continue
+            q = prima_tripla(r, COL_PRESA)
+            if not q: continue
+            casa, trasf = r["HomeTeam"], r["AwayTeam"]
+            lh, la = lambda_partita(modello, casa, trasf)
+            mk = mercati(matrice_punteggi(lh, la, modello["rho"]))
+            P = np.array([mk["p1"], mk["px"], mk["p2"]]); pm = senza_margine(q)
+            nomi = [f"1 ({casa})", "X (Pareggio)", f"2 ({trasf})"]
+            for k in range(3):
+                righe_v.append({"Data": r["Date"].strftime("%d/%m") if "Date" in r and pd.notna(r["Date"]) else "", "Partita": f"{casa} vs {trasf}", "Selezione": nomi[k], "Prob_Modello": round(P[k] * 100, 1), "Prob_Mercato": round(pm[k] * 100, 1), "Quota_Book": round(q[k], 2), "Edge": round((P[k] * q[k] - 1) * 100, 1)})
+        if righe_v:
+            df_val = pd.DataFrame(righe_v)
+            st.dataframe(migliori_per_partita(df_val, PROB_MIN_DEFAULT), use_container_width=True, hide_index=True)
+        else: st.info("Nessuna quota disponibile per il prossimo turno.")
 
 with tabs[4]:
-    st.subheader("🧪 Backtest")
-    if st.button("Esegui Backtest"):
-        st.write("Calcolo in corso...")
-        bt = backtest_cached(div, par["ridge"], par["halflife"], 14, giorno)
-        if bt is not None and not bt.empty:
-            mt = metriche_backtest(bt)
-            st.metric("Log Loss Modello", f"{mt['modello'][0]:.4f}")
+    st.subheader("🧪 Backtest walk-forward")
+    if st.button("🚀 Esegui Backtest 1X2"):
+        with st.spinner("Calcolo..."):
+            bt = backtest_cached(div, par["ridge"], par["halflife"], 14, giorno)
+            if bt is not None:
+                mt = metriche_backtest(bt)
+                st.metric("Log loss modello", f"{mt['modello'][0]:.4f}")
+                if "mercato" in mt: st.metric("Log loss mercato", f"{mt['mercato'][0]:.4f}")
+                st.dataframe(tabella_scommesse(bt), use_container_width=True, hide_index=True)
+    
+    st.markdown("---")
+    st.markdown("### 🔬 Test completo (Goal, OU, Esatti)")
+    if st.button("🧪 Esegui Test Completo"):
+        with st.spinner("Calcolo..."):
+            tc = test_completo_cached(div, par["ridge"], par["halflife"], 14, giorno, 9)
+            if tc is not None:
+                st.success(f"Test completato su {len(tc['xs'])} partite.")
+                # Mostriamo un riassunto veloce
+                st.write("I dati del test completo sono pronti e utilizzati per calibrare i pesi dell'app.")
 
 with tabs[5]:
+    st.subheader("🌍 Coppe Europee")
+    coppa = st.selectbox("Competizione", list(COPPE.keys()), key="coppa_sel")
+    df_c, mancanti_c = carica_storico_coppa(coppa, giorno)
+    if df_c is not None:
+        st.write(f"Trovate {len(df_c[df_c['FTHG'].notna()])} partite giocate.")
+        if st.button("Esegui Test Coppe"):
+            with st.spinner("Calcolo..."):
+                d_c, rating_c = elo_interno_coppe(df_c)
+                m_c = adatta_coppe(d_c.dropna(subset=["FTHG", "EloDiff"]))
+                st.write(f"Modello stimato: gol base {math.exp(m_c['mu']):.2f}, peso Elo {m_c['beta']:.2f}")
+    else:
+        st.warning("Dati coppe non disponibili.")
+
+with tabs[6]:
     st.subheader("🧮 Calcolatore Kelly")
     c1, c2, c3 = st.columns(3)
     p_stim = c1.slider("Probabilità Modello (%)", 1.0, 100.0, 45.0)
