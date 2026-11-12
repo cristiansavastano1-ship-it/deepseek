@@ -514,14 +514,6 @@ def frequenze_combo(df):
         for k in (0, 1, 2): out[f"{nome} {k} gol"] = float((g_ == k).mean())
         out[f"{nome} 3+ gol"] = float((g_ >= 3).mean())
         for a, b in [(0, 1), (1, 2), (1, 3), (2, 3), (2, 4)]: out[f"{nome} {a}-{b} gol"] = float(((g_ >= a) & (g_ <= b)).mean())
-    if {"HTHG", "HTAG"}.issubset(df.columns):
-        d2 = df.dropna(subset=["HTHG", "HTAG"])
-        if len(d2) >= 100:
-            h1 = (d2["HTHG"] + d2["HTAG"]).to_numpy(); h2 = ((d2["FTHG"] - d2["HTHG"]) + (d2["FTAG"] - d2["HTAG"])).to_numpy()
-            for nome, h in (("1° tempo", h1), ("2° tempo", h2)):
-                for a, b in [(0, 1), (1, 2), (1, 3), (2, 3), (2, 4)]: out[f"{nome} {a}-{b} gol"] = float(((h >= a) & (h <= b)).mean())
-                out[f"{nome} 0 gol"] = float((h == 0).mean()); out[f"{nome} 1 gol"] = float((h == 1).mean())
-                out[f"{nome} almeno 1 gol"] = float((h >= 1).mean()); out[f"{nome} almeno 2 gol"] = float((h >= 2).mean())
     return out
 
 def _sopra_media(finestre, freq, chiave_fn):
@@ -804,7 +796,7 @@ def riassunto_clv(bt, soglia_pct):
     return int(sel.sum()), float(clv.mean() * 100), float(clv.std(ddof=1) / math.sqrt(len(clv)) * 100)
 
 # ============================================================
-# FUNZIONI LIVE
+# FUNZIONI LIVE (Con Forma e Heatmap)
 # ============================================================
 def stats_attese(df, casa, trasf, k=5):
     out = {}
@@ -817,6 +809,41 @@ def stats_attese(df, casa, trasf, k=5):
         dc, dt = d[d["HomeTeam"] == casa], d[d["AwayTeam"] == trasf]
         out[nome] = (round((sm(dc[h], lega_h) + sm(dt[h], lega_h)) / 2, 1), round((sm(dt[a], lega_a) + sm(dc[a], lega_a)) / 2, 1))
     return out
+
+def ultimi_5_risultati(df, squadra):
+    """Ritorna una stringa con gli ultimi 5 risultati (V, N, P) della squadra."""
+    d = df[(df["HomeTeam"] == squadra) | (df["AwayTeam"] == squadra)].sort_values("Date").tail(5)
+    res = []
+    for r in d.itertuples():
+        if r.HomeTeam == squadra:
+            esito = "V" if r.FTHG > r.FTAG else ("N" if r.FTHG == r.FTAG else "P")
+        else:
+            esito = "V" if r.FTAG > r.FTHG else ("N" if r.FTHG == r.FTAG else "P")
+        res.append(esito)
+    return res
+
+def crea_heatmap(M):
+    # Consideriamo solo i primi 6 gol per non avere una matrice troppo grande
+    M_ridotta = M[:6, :6] * 100
+    fig = go.Figure(data=go.Heatmap(
+        z=M_ridotta,
+        x=[str(i) for i in range(6)],
+        y=[str(i) for i in range(6)],
+        colorscale='Blues',
+        text=np.round(M_ridotta, 1),
+        texttemplate="%{text}%",
+        hovertemplate="Risultato: %{y}-%{x}<br>Probabilità: %{z:.1f}%<extra></extra>"
+    ))
+    fig.update_layout(
+        title="Matrice dei Risultati Esatti",
+        xaxis_title="Gol Trasferta",
+        yaxis_title="Gol Casa",
+        yaxis_autorange="reversed",
+        template="plotly_dark",
+        height=400,
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    return fig
 
 def tabella_classifica(df_stag):
     righe = {}
@@ -982,7 +1009,6 @@ def mostra_analisi(casa, trasf, data, ora):
     eq_1x2 = f"1 {pp['1']*100:.0f}% · X {pp['X']*100:.0f}% · 2 {pp['2']*100:.0f}%"
     emoji = {"alta": "🟢", "media": "🟡", "bassa": "🔴"}[livello]
     
-    # NUOVO BLOCCO CON ALTERNATIVA
     testo_alternativa = ""
     if livello == "bassa" or "debole" in motivo_g:
         alt_dc = pr["doppia_x_best"]
@@ -1007,6 +1033,24 @@ _{motivo_g}_
 
 **Fiducia:** {livello.upper()}{" · ⚠ squadre senza storico (neopromosse o inizio stagione)" if senza_storico else ""}
 {testo_alternativa}""")
+
+    if st.button("🧮 Calcola Kelly per questa giocata"):
+        st.session_state["kelly_p"] = pp[chiave_g] * 100
+        st.session_state["kelly_q"] = round(1 / pp[chiave_g], 2)
+        st.success("Dati inviati alla scheda Kelly! Vai alla tab 🧮 Kelly.")
+
+    st.markdown("#### 📈 Forma Recente (Ultime 5 partite)")
+    f_casa = ultimi_5_risultati(df_storico, casa)
+    f_trasf = ultimi_5_risultati(df_storico, trasf)
+    def fmt_forma(lst):
+        return " ".join([f"<span style='background:{'#22c55e' if x=='V' else ('#eab308' if x=='N' else '#ef4444')}; color:white; padding:2px 6px; border-radius:4px; font-weight:bold;'>{x}</span>" for x in lst])
+    st.markdown(f"""
+    <div style="display: flex; justify-content: space-around; text-align: center; background: #111827; padding: 15px; border-radius: 10px;">
+        <div><b>{casa}</b><br>{fmt_forma(f_casa)}</div>
+        <div style="color: #64748b;">VS</div>
+        <div><b>{trasf}</b><br>{fmt_forma(f_trasf)}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
     tot_gol = lh + la; gol_lega = sum(gol_attesi(M_freq_live))
     tipo = "più gol del solito" if tot_gol >= gol_lega + 0.3 else ("meno gol del solito" if tot_gol <= gol_lega - 0.3 else "gol nella media")
@@ -1047,10 +1091,8 @@ _{motivo_g}_
     if es_t: st.dataframe(pd.DataFrame(es_t), use_container_width=True, hide_index=True)
     else: st.info("Mancano i dati dei tempi (HTHG/HTAG) per questo campionato.")
 
-    st.markdown("#### 🎯 Top 3 Risultati Esatti Finali")
-    flat = sorted(((i, j, M[i, j]) for i in range(M.shape[0]) for j in range(M.shape[1])), key=lambda t: t[2], reverse=True)[:3]
-    for col, medaglia, nome, (i, j, p) in zip(st.columns(3), ["🥇", "🥈", "🥉"], ["1°", "2°", "3°"], flat):
-        col.info(f"{medaglia} **{i} - {j}** ({p*100:.1f}%)")
+    st.markdown("#### 🎯 Heatmap Risultati Esatti Finali")
+    st.plotly_chart(crea_heatmap(M), use_container_width=True)
 
 with tabs[0]:
     st.caption(f"Fonte: {fonte_cal}")
@@ -1104,6 +1146,8 @@ with tabs[3]:
     st.subheader("⚡ Scanner Value Finder")
     if fx is None or fx.empty: st.info("Nessuna partita futura con quote.")
     else:
+        solo_storico = st.checkbox("Escludi squadre neopromosse (senza storico)", value=True)
+        edge_min = st.slider("Edge Minimo (%)", 0.0, 25.0, 3.0)
         righe_v = []
         for _, r in fx.iterrows():
             if "Date" in r and pd.notna(r["Date"]) and r["Date"] < oggi_ts: continue
@@ -1115,11 +1159,14 @@ with tabs[3]:
             P = np.array([mk["p1"], mk["px"], mk["p2"]]); pm = senza_margine(q)
             nomi = [f"1 ({casa})", "X (Pareggio)", f"2 ({trasf})"]
             for k in range(3):
-                righe_v.append({"Data": r["Date"].strftime("%d/%m") if "Date" in r and pd.notna(r["Date"]) else "", "Partita": f"{casa} vs {trasf}", "Selezione": nomi[k], "Prob_Modello": round(P[k] * 100, 1), "Prob_Mercato": round(pm[k] * 100, 1), "Quota_Book": round(q[k], 2), "Edge": round((P[k] * q[k] - 1) * 100, 1)})
+                nota = "⚠ senza storico" if (casa not in modello["idx"] or trasf not in modello["idx"]) else ""
+                if solo_storico and nota: continue
+                edge = (P[k] * q[k] - 1) * 100
+                if edge >= edge_min:
+                    righe_v.append({"Data": r["Date"].strftime("%d/%m") if "Date" in r and pd.notna(r["Date"]) else "", "Partita": f"{casa} vs {trasf}", "Selezione": nomi[k], "Prob_Modello": round(P[k] * 100, 1), "Prob_Mercato": round(pm[k] * 100, 1), "Quota_Book": round(q[k], 2), "Edge": round(edge, 1)})
         if righe_v:
-            df_val = pd.DataFrame(righe_v)
-            st.dataframe(migliori_per_partita(df_val, PROB_MIN_DEFAULT), use_container_width=True, hide_index=True)
-        else: st.info("Nessuna quota disponibile per il prossimo turno.")
+            st.dataframe(pd.DataFrame(righe_v).sort_values("Edge", ascending=False), use_container_width=True, hide_index=True)
+        else: st.info("Nessuna selezione con questi filtri.")
 
 with tabs[4]:
     st.subheader("🧪 Backtest walk-forward")
@@ -1139,8 +1186,6 @@ with tabs[4]:
             tc = test_completo_cached(div, par["ridge"], par["halflife"], 14, giorno, 9)
             if tc is not None:
                 st.success(f"Test completato su {len(tc['xs'])} partite.")
-                # Mostriamo un riassunto veloce
-                st.write("I dati del test completo sono pronti e utilizzati per calibrare i pesi dell'app.")
 
 with tabs[5]:
     st.subheader("🌍 Coppe Europee")
@@ -1159,9 +1204,15 @@ with tabs[5]:
 with tabs[6]:
     st.subheader("🧮 Calcolatore Kelly")
     c1, c2, c3 = st.columns(3)
-    p_stim = c1.slider("Probabilità Modello (%)", 1.0, 100.0, 45.0)
-    q_book = c2.number_input("Quota Bookmaker", 1.01, 50.0, 2.30)
+    
+    # Precompilazione da match attivo
+    p_default = st.session_state.get("kelly_p", 45.0)
+    q_default = st.session_state.get("kelly_q", 2.30)
+    
+    p_stim = c1.slider("Probabilità Modello (%)", 1.0, 100.0, float(p_default))
+    q_book = c2.number_input("Quota Bookmaker", 1.01, 50.0, float(q_default))
     bankroll = c3.number_input("Bankroll (€)", 10.0, 100000.0, 1000.0)
+    
     q_equa = 100 / p_stim; ev = (p_stim / 100) * q_book - 1
     b, p = q_book - 1, p_stim / 100; kelly_fraction = max(0.0, (b * p - (1 - p)) / b) * 0.25
     st.metric("Stake (Kelly 25%)", f"€{bankroll*kelly_fraction:.2f}")
