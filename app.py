@@ -65,7 +65,7 @@ COL_CASA = "#38bdf8"
 COL_TRASF = "#f43f5e"
 
 # ============================================================
-# CSS & HEADER (con ottimizzazioni iOS/Mobile)
+# CSS & HEADER (con ottimizzazioni iOS/Mobile e Tooltips)
 # ============================================================
 st.markdown(f"""
 <style>
@@ -88,6 +88,40 @@ html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
 [data-testid="stMetricValue"] {{ color: {COL_PRIMARIO} !important; font-weight: 700 !important; }}
 div[data-testid="stExpander"] {{ border: 1px solid #1f2937; border-radius: 12px; }}
 
+/* TOOLTIP CSS */
+.tooltip {{
+  position: relative;
+  display: inline-block;
+  cursor: help;
+  color: #64748b;
+  font-size: 0.8rem;
+  margin-left: 4px;
+}}
+.tooltip .tooltiptext {{
+  visibility: hidden;
+  width: 220px;
+  background-color: #1e293b;
+  color: #f8fafc;
+  text-align: center;
+  border-radius: 6px;
+  padding: 8px;
+  position: absolute;
+  z-index: 1;
+  bottom: 125%;
+  left: 50%;
+  margin-left: -110px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  font-size: 0.75rem;
+  font-weight: normal;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+  border: 1px solid #334155;
+}}
+.tooltip:hover .tooltiptext {{
+  visibility: visible;
+  opacity: 1;
+}}
+
 /* OTTIMIZZAZIONE MOBILE / iOS */
 @media (max-width: 768px) {{
     .block-container {{ padding-top: 1rem; padding-left: 0.5rem; padding-right: 0.5rem; }}
@@ -96,9 +130,13 @@ div[data-testid="stExpander"] {{ border: 1px solid #1f2937; border-radius: 12px;
     [data-testid="stMetricValue"] {{ font-size: 1.2rem !important; }}
     .stButton>button {{ width: 100%; }}
     .stDataFrame {{ font-size: 0.8rem; }}
+    .tooltip .tooltiptext {{ width: 160px; margin-left: -80px; }}
 }}
 </style>
 """, unsafe_allow_html=True)
+
+def tooltip_testo(testo):
+    return f'<span class="tooltip">❓<span class="tooltiptext">{testo}</span></span>'
 
 st.markdown(f"""
 <div style="background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%);
@@ -789,6 +827,49 @@ def tabella_scommesse(bt, soglie=(0, 2, 5, 8, 10)):
         righe.append({"Edge min %": s, "Scommesse": n, "Vinte %": round((y[sel] == k[sel]).mean() * 100, 1), "ROI %": round(pr.mean() * 100, 1), "± ROI %": round(pr.std(ddof=1) / math.sqrt(n) * 100, 1) if n > 1 else None, "CLV medio %": round(float(np.nanmean(c)) * 100, 1) if np.isfinite(c).any() else None})
     return pd.DataFrame(righe)
 
+def calcola_grafico_calibrazione(bt):
+    P = bt[['p1', 'px', 'p2']].values.flatten()
+    y = bt['y'].values
+    O = np.eye(3)[y].flatten()
+    
+    bins = np.linspace(0, 1, 11)
+    bin_centers = (bins[:-1] + bins[1:]) / 2
+    real_freq = []
+    counts = []
+    
+    for i in range(len(bins)-1):
+        mask = (P >= bins[i]) & (P < bins[i+1])
+        if mask.sum() > 0:
+            real_freq.append(O[mask].mean() * 100)
+            counts.append(mask.sum())
+        else:
+            real_freq.append(np.nan)
+            counts.append(0)
+            
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=[0, 100], y=[0, 100], mode='lines', name='Calibrazione Perfetta', line=dict(dash='dash', color='#64748b')))
+    
+    valid_idx = [i for i, c in enumerate(counts) if c > 30]
+    fig.add_trace(go.Scatter(
+        x=[bin_centers[i]*100 for i in valid_idx],
+        y=[real_freq[i] for i in valid_idx],
+        mode='lines+markers',
+        name='Modello',
+        text=[f"Casi: {counts[i]}" for i in valid_idx],
+        marker=dict(size=10, color='#38bdf8'),
+        line=dict(color='#38bdf8', width=3)
+    ))
+    
+    fig.update_layout(
+        title="Calibrazione: Probabilità Prevista vs Frequenza Reale",
+        xaxis_title="Probabilità Prevista (%)",
+        yaxis_title="Frequenza Reale (%)",
+        template="plotly_dark",
+        height=450,
+        hovermode="closest"
+    )
+    return fig
+
 def migliori_per_partita(df, min_prob):
     if df is None or df.empty: return df
     d = df[df["Prob_Mercato"] >= min_prob]
@@ -1061,13 +1142,13 @@ _{motivo_g}_
         for label, (vc, vt) in righe_st.items():
             st.markdown(f"""<div style="display: flex; justify-content: space-between; background: #111827; padding: 12px 18px; border-radius: 10px; border: 1px solid #1f2937; margin-bottom: 10px;"><span style="font-weight: 700; color: {COL_CASA}; width: 60px;">{vc}</span><span style="color: #94a3b8; text-align: center; flex-grow: 1;">{label}</span><span style="font-weight: 700; color: {COL_TRASF}; width: 60px; text-align: right;">{vt}</span></div>""", unsafe_allow_html=True)
 
-    st.markdown("#### 📊 Mercati 1X2")
+    st.markdown(f"#### 📊 Mercati 1X2 {tooltip_testo('Probabilità calcolate dal modello Dixon-Coles. La quota equa è 1 / Probabilità.')}", unsafe_allow_html=True)
     a1, a2, a3 = st.columns(3)
     a1.metric("1 (Casa)", f"{mk['p1']*100:.1f}%", f"Quota equa: {1/mk['p1']:.2f}", delta_color="off")
     a2.metric("X (Pareggio)", f"{mk['px']*100:.1f}%", f"Quota equa: {1/mk['px']:.2f}", delta_color="off")
     a3.metric("2 (Trasferta)", f"{mk['p2']*100:.1f}%", f"Quota equa: {1/mk['p2']:.2f}", delta_color="off")
 
-    st.markdown("#### ⚽ Goal, Over, Under")
+    st.markdown(f"#### ⚽ Goal, Over, Under {tooltip_testo('Mercati derivati dalla distribuzione dei gol attesi.')}", unsafe_allow_html=True)
     u1, u2, u3, u4, u5 = st.columns(5)
     u1.metric("Over 2.5", f"{mg['over2.5']*100:.1f}%", f"Under: {(1-mg['over2.5'])*100:.1f}%", delta_color="off")
     u2.metric("Over 1.5", f"{mg['over1.5']*100:.1f}%", f"Under: {(1-mg['over1.5'])*100:.1f}%", delta_color="off")
@@ -1075,14 +1156,14 @@ _{motivo_g}_
     u4.metric("Goal (BTTS)", f"{mg['btts']*100:.1f}%", f"Quota: {1/mg['btts']:.2f}", delta_color="off")
     u5.metric("No Goal", f"{(1-mg['btts'])*100:.1f}%", f"Quota: {1/(1-mg['btts']):.2f}", delta_color="off")
 
-    st.markdown("#### 🎰 Multigol")
+    st.markdown(f"#### 🎰 Multigol {tooltip_testo('Mostra la finestra in cui il modello si distacca di più dalla media storica del campionato.')}", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     with c1:
         st.metric("Multigol sopra media (3 gol)", f"{pr['multigol_best']} gol", f"{pr['multigol_best_p']*100:.1f}%" + (f" · media {pr['multigol_best_f']*100:.1f}%" if pr.get('multigol_best_f') else ""), delta_color="off")
     with c2:
         st.metric("Multigol 1° tempo sopra media", f"{pt['t1_best']} gol", f"{pt['t1_best_p']*100:.1f}%" + (f" · media {pt['t1_best_f']*100:.1f}%" if pt.get('t1_best_f') else ""), delta_color="off")
 
-    st.markdown("#### ⏱️ Risultati esatti per tempo (con sorpresa)")
+    st.markdown(f"#### ⏱️ Risultati esatti per tempo (con sorpresa) {tooltip_testo('La colonna Sorpresa mostra un punteggio plausibile che il modello stima più probabile della media storica.')}", unsafe_allow_html=True)
     es_t = esatti_per_tempo(d["M_gol"], df_storico)
     if es_t: st.dataframe(pd.DataFrame(es_t), use_container_width=True, hide_index=True)
     else: st.info("Mancano i dati dei tempi (HTHG/HTAG) per questo campionato.")
@@ -1147,7 +1228,7 @@ with tabs[1]:
         
         if not selected.empty:
             st.markdown("---")
-            st.markdown("### 🎫 La tua Multipla")
+            st.markdown(f"### 🎫 La tua Multipla {tooltip_testo('EV (Valore Atteso) positivo significa che, sulla carta, la scommessa è vantaggiosa a lungo termine.')}", unsafe_allow_html=True)
             
             prob_comb = np.prod(selected["Probabilità %"] / 100)
             quota_tot = np.prod(selected["Quota Equa"])
@@ -1181,6 +1262,7 @@ with tabs[3]:
     else:
         solo_storico = st.checkbox("Escludi squadre neopromosse (senza storico)", value=True)
         edge_min = st.slider("Edge Minimo (%)", 0.0, 25.0, 3.0)
+        st.markdown(f"L'Edge è il vantaggio percentuale della quota rispetto alla probabilità. {tooltip_testo('Edge = (Probabilità Modello x Quota Bookmaker) - 1. Se positivo, la quota offerta è più alta di quella equa.')}", unsafe_allow_html=True)
         righe_v = []
         for _, r in fx.iterrows():
             if "Date" in r and pd.notna(r["Date"]) and r["Date"] < oggi_ts: continue
@@ -1208,9 +1290,14 @@ with tabs[4]:
             bt = backtest_cached(div, par["ridge"], par["halflife"], 14, giorno)
             if bt is not None:
                 mt = metriche_backtest(bt)
-                st.metric("Log loss modello", f"{mt['modello'][0]:.4f}")
-                if "mercato" in mt: st.metric("Log loss mercato", f"{mt['mercato'][0]:.4f}")
+                st.metric("Log loss modello", f"{mt['modello'][0]:.4f}", help="Più basso è, meglio è.")
+                if "mercato" in mt: st.metric("Log loss mercato", f"{mt['mercato'][0]:.4f}", help="Il benchmark da battere.")
                 st.dataframe(tabella_scommesse(bt), use_container_width=True, hide_index=True)
+                
+                st.markdown("---")
+                st.markdown("#### 📈 Grafico di Calibrazione")
+                st.markdown("Se i puntini blu seguono la linea tratteggiata, il modello è **calibrato**: quando dice 40%, l'evento accade davvero il 40% delle volte.")
+                st.plotly_chart(calcola_grafico_calibrazione(bt), use_container_width=True)
     
     st.markdown("---")
     st.markdown("### 🔬 Test completo (Goal, OU, Esatti)")
@@ -1247,4 +1334,4 @@ with tabs[6]:
     
     q_equa = 100 / p_stim; ev = (p_stim / 100) * q_book - 1
     b, p = q_book - 1, p_stim / 100; kelly_fraction = max(0.0, (b * p - (1 - p)) / b) * 0.25
-    st.metric("Stake (Kelly 25%)", f"€{bankroll*kelly_fraction:.2f}")
+    st.metric(f"Stake (Kelly 25%) {tooltip_testo('Il criterio di Kelly calcola la percentuale ottimale del bankroll da puntare. Usiamo il 25% del valore pieno per ridurre la varianza.')}", f"€{bankroll*kelly_fraction:.2f}")
