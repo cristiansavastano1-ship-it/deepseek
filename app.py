@@ -76,7 +76,7 @@ COL_CASA = "#38bdf8"
 COL_TRASF = "#f43f5e"
 
 # ============================================================
-# CSS & HEADER (con ottimizzazioni iOS/Mobile e Tooltips)
+# CSS & HEADER
 # ============================================================
 st.markdown(f"""
 <style>
@@ -100,15 +100,8 @@ html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
 div[data-testid="stExpander"] {{ border: 1px solid #1f2937; border-radius: 12px; }}
 
 /* TOOLTIP CSS */
-.tooltip {{
-  position: relative; display: inline-block; cursor: help; color: #64748b; font-size: 0.8rem; margin-left: 4px;
-}}
-.tooltip .tooltiptext {{
-  visibility: hidden; width: 220px; background-color: #1e293b; color: #f8fafc; text-align: center;
-  border-radius: 6px; padding: 8px; position: absolute; z-index: 1; bottom: 125%; left: 50%;
-  margin-left: -110px; opacity: 0; transition: opacity 0.3s; font-size: 0.75rem; font-weight: normal;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #334155;
-}}
+.tooltip {{ position: relative; display: inline-block; cursor: help; color: #64748b; font-size: 0.8rem; margin-left: 4px; }}
+.tooltip .tooltiptext {{ visibility: hidden; width: 220px; background-color: #1e293b; color: #f8fafc; text-align: center; border-radius: 6px; padding: 8px; position: absolute; z-index: 1; bottom: 125%; left: 50%; margin-left: -110px; opacity: 0; transition: opacity 0.3s; font-size: 0.75rem; font-weight: normal; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #334155; }}
 .tooltip:hover .tooltiptext {{ visibility: visible; opacity: 1; }}
 
 /* OTTIMIZZAZIONE MOBILE / iOS */
@@ -128,16 +121,9 @@ def tooltip_testo(testo):
     return f'<span class="tooltip">❓<span class="tooltiptext">{testo}</span></span>'
 
 st.markdown(f"""
-<div style="background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%);
-            padding: 25px; border-radius: 20px; border: 1px solid #312e81;
-            text-align: center; margin-bottom: 20px;
-            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.4);">
-    <h1 style="color: #f8fafc; font-weight: 800; font-size: 2rem; margin: 0;">
-        ⚽ COMBO MASTER 4.0
-    </h1>
-    <p style="color: #94a3b8; font-size: 0.95rem; margin-top: 8px;">
-        Dixon-Coles onesto · la X emerge quando deve · test separati dal training
-    </p>
+<div style="background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%); padding: 25px; border-radius: 20px; border: 1px solid #312e81; text-align: center; margin-bottom: 20px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.4);">
+    <h1 style="color: #f8fafc; font-weight: 800; font-size: 2rem; margin: 0;">⚽ COMBO MASTER 4.0</h1>
+    <p style="color: #94a3b8; font-size: 0.95rem; margin-top: 8px;">Dixon-Coles onesto · la X emerge quando deve · test separati dal training</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -252,7 +238,7 @@ def _diff_se(a, b):
     return f"{d.mean():+.4f} ± {se:.4f}"
 
 # ============================================================
-# DATA LAYER: NAZIONALI (football-data.co.uk)
+# DATA LAYER
 # ============================================================
 @st.cache_data(ttl=6 * 3600)
 def carica_storico(div, n_stagioni, giorno):
@@ -285,6 +271,15 @@ def carica_fixtures(div):
         d["Date"] = pd.to_datetime(d["Date"], dayfirst=True, errors="coerce", format="mixed")
     return d.reset_index(drop=True), None
 
+@st.cache_data(ttl=3600)
+def scarica_calendario_api(chiave, codice):
+    if not chiave: return None
+    try:
+        res = requests.get(f"https://api.football-data.org/v4/competitions/{codice}/matches", headers={"X-Auth-Token": chiave}, timeout=TIMEOUT)
+        if res.status_code == 200: return res.json()
+    except Exception: pass
+    return None
+
 def assegna_giornate(righe):
     conta = {}
     for r in righe:
@@ -295,10 +290,7 @@ def assegna_giornate(righe):
     return righe
 
 def costruisci_calendario(div, df_storico, fx, chiave, squadre_modello):
-    if chiave:
-        dati = scarica_calendario_api(chiave, API_CODICI[div])
-    else:
-        dati = None
+    dati = scarica_calendario_api(chiave, API_CODICI[div]) if chiave else None
     if dati and dati.get("matches"):
         nomi = {m["homeTeam"]["name"] for m in dati["matches"]} | {m["awayTeam"]["name"] for m in dati["matches"]}
         nomi = {n for n in nomi if n}
@@ -327,9 +319,6 @@ def costruisci_calendario(div, df_storico, fx, chiave, squadre_modello):
     righe = assegna_giornate(righe)
     return pd.DataFrame(righe).drop(columns="_d"), "football-data.co.uk (giocate + prossimo turno)"
 
-# ============================================================
-# DATA LAYER: COMPETIZIONI INTERNAZIONALI (football-data.org + Odds API)
-# ============================================================
 @st.cache_data(ttl=3600)
 def carica_storico_intl(chiave, fd_id, n_stagioni, giorno):
     if not chiave: return None
@@ -347,16 +336,10 @@ def carica_storico_intl(chiave, fd_id, n_stagioni, giorno):
                 for m in matches:
                     ft = (m.get("score") or {}).get("fullTime") or {}
                     if ft.get("home") is not None and ft.get("away") is not None:
-                        righe.append({
-                            "Date": pd.to_datetime(m["utcDate"]).tz_localize(None),
-                            "HomeTeam": m["homeTeam"]["name"], "AwayTeam": m["awayTeam"]["name"],
-                            "FTHG": ft["home"], "FTAG": ft["away"],
-                            "Stag": y
-                        })
+                        righe.append({"Date": pd.to_datetime(m["utcDate"]).tz_localize(None), "HomeTeam": m["homeTeam"]["name"], "AwayTeam": m["awayTeam"]["name"], "FTHG": ft["home"], "FTAG": ft["away"], "Stag": y})
                 if righe: frames.append(pd.DataFrame(righe))
-        except Exception:
-            pass
-        time.sleep(6) # Rispetta il rate limit di 10 richieste/minuto
+        except Exception: pass
+        time.sleep(6) 
     if not frames: return None
     df = pd.concat(frames, ignore_index=True)
     return df.sort_values("Date").reset_index(drop=True)
@@ -371,9 +354,7 @@ def carica_odds_api(api_key, sport_key):
             dati = res.json()
             quotes = {}
             for match in dati:
-                home = match["home_team"]
-                away = match["away_team"]
-                # Prendiamo la media delle quote di tutti i bookmaker
+                home, away = match["home_team"], match["away_team"]
                 h_odds, d_odds, a_odds = [], [], []
                 for bm in match.get("bookmakers", []):
                     for mkt in bm.get("markets", []):
@@ -385,8 +366,7 @@ def carica_odds_api(api_key, sport_key):
                 if h_odds and d_odds and a_odds:
                     quotes[(home, away)] = [np.mean(h_odds), np.mean(d_odds), np.mean(a_odds)]
             return quotes
-    except Exception:
-        pass
+    except Exception: pass
     return {}
 
 # ============================================================
@@ -490,7 +470,78 @@ def matrice_ancorata(p1x2, p_over25, rho, start):
     return matrice_punteggi(math.exp(res.x[0]), math.exp(res.x[1]), rho)
 
 # ============================================================
-# PRONOSTICI E GIOCATA CONSIGLIATA
+# PARAMETRI E BACKTEST
+# ============================================================
+def esegui_backtest_df(df, ridge, halflife, usa_dc, passo):
+    stagioni = sorted(df["Stag"].unique())
+    if len(stagioni) < 2: return pd.DataFrame()
+    t = df.loc[df["Stag"] == stagioni[1], "Date"].min()
+    fine = df["Date"].max()
+    righe = []
+    while t <= fine:
+        blocco = df[(df["Date"] >= t) & (df["Date"] < t + pd.Timedelta(days=passo))]
+        train = df[df["Date"] < t]
+        if len(blocco) and len(train) >= 150:
+            m = adatta_modello(train, t, ridge, halflife, usa_dc)
+            esiti_tr = np.where(train["FTHG"] > train["FTAG"], 0, np.where(train["FTHG"] == train["FTAG"], 1, 2))
+            freq = np.bincount(esiti_tr, minlength=3) / len(esiti_tr)
+            for _, r in blocco.iterrows():
+                lh, la = lambda_partita(m, r["HomeTeam"], r["AwayTeam"])
+                mk = mercati(matrice_punteggi(lh, la, m["rho"]))
+                esito = 0 if r["FTHG"] > r["FTAG"] else (1 if r["FTHG"] == r["FTAG"] else 2)
+                qp, qc = prima_tripla(r, COL_PRESA), prima_tripla(r, COL_CHIUSURA)
+                pm = senza_margine(qc) if qc else [np.nan] * 3
+                righe.append({"Date": r["Date"], "Partita": f"{r['HomeTeam']} - {r['AwayTeam']}", "y": esito, "p1": mk["p1"], "px": mk["px"], "p2": mk["p2"], "f1": freq[0], "fx": freq[1], "f2": freq[2], "q1": qp[0] if qp else np.nan, "qx": qp[1] if qp else np.nan, "q2": qp[2] if qp else np.nan, "m1": pm[0], "mx": pm[1], "m2": pm[2]})
+        t += pd.Timedelta(days=passo)
+    return pd.DataFrame(righe)
+
+def _ll_brier(P, y):
+    P = np.asarray(P, float)
+    ll = -np.mean(np.log(np.clip(P[np.arange(len(y)), y], 1e-9, 1)))
+    br = np.mean(np.sum((P - np.eye(3)[y]) ** 2, axis=1))
+    return ll, br
+
+def metriche_backtest(bt):
+    y = bt["y"].to_numpy(int)
+    out = {"n": len(bt)}
+    out["modello"] = _ll_brier(bt[["p1", "px", "p2"]].to_numpy(), y)
+    out["frequenze"] = _ll_brier(bt[["f1", "fx", "f2"]].to_numpy(), y)
+    ok = bt[["m1", "mx", "m2"]].notna().all(axis=1).to_numpy()
+    if ok.sum() > 30:
+        out["mercato"] = _ll_brier(bt.loc[ok, ["m1", "mx", "m2"]].to_numpy(), y[ok])
+        out["modello_su_mercato"] = _ll_brier(bt.loc[ok, ["p1", "px", "p2"]].to_numpy(), y[ok])
+        out["n_mercato"] = int(ok.sum())
+    return out
+
+def scegli_parametri(df):
+    default = {"ridge": 2.0, "halflife": 365, "log_loss": None, "ricerca": [], "auto": False}
+    if df is None or df["Stag"].nunique() < 2: return default
+    ricerca = []
+    for r_ in RIDGE_GRID:
+        for h_ in HALFLIFE_GRID:
+            bt = esegui_backtest_df(df, r_, h_, True, 28)
+            if not bt.empty:
+                ricerca.append({"Shrinkage λ": r_, "Emivita (gg)": str(h_) if h_ else "nessuna", "Log loss": round(metriche_backtest(bt)["modello"][0], 4), "_r": r_, "_h": h_})
+    if not ricerca: return default
+    best = min(ricerca, key=lambda z: z["Log loss"])
+    return {"ridge": best["_r"], "halflife": best["_h"], "log_loss": best["Log loss"], "auto": True, "ricerca": [{k: v for k, v in z.items() if not k.startswith("_")} for z in ricerca]}
+
+@st.cache_data(ttl=6 * 3600, show_spinner="Ottimizzo i parametri (solo la prima volta di giornata)...")
+def parametri_auto(div, giorno): return scegli_parametri(carica_storico(div, N_STAGIONI, giorno))
+
+@st.cache_data(ttl=6 * 3600)
+def modello_corrente(div, ridge, halflife, giorno):
+    df = carica_storico(div, N_STAGIONI, giorno)
+    if df is None or len(df) < 100: return None
+    return adatta_modello(df, pd.Timestamp.now().normalize(), ridge, halflife, True)
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def backtest_cached(div, ridge, halflife, passo, giorno):
+    df = carica_storico(div, N_STAGIONI, giorno)
+    return None if df is None else esegui_backtest_df(df, ridge, halflife, True, passo)
+
+# ============================================================
+# FUNZIONI PER I PRONOSTICI E LA GIOCATA CONSIGLIATA
 # ============================================================
 _ESITI_MASK = {"1": _MASK["p1"], "X": _MASK["px"], "2": _MASK["p2"], "1X": _MASK["p1"] | _MASK["px"], "X2": _MASK["px"] | _MASK["p2"], "12": _MASK["p1"] | _MASK["p2"]}
 _MERC_MASK = {"Goal": _MASK["btts"], "No Goal": ~_MASK["btts"], "Over 1.5": _MASK["over1.5"], "Under 1.5": ~_MASK["over1.5"], "Over 2.5": _MASK["over2.5"], "Under 2.5": ~_MASK["over2.5"], "Over 3.5": _MASK["over3.5"], "Under 3.5": ~_MASK["over3.5"]}
@@ -723,7 +774,7 @@ def distribuzione_live(casa, trasf, modello, pesi, M_freq_live, quote_fixtures):
     Mb = matrice_punteggi(lh, la, modello["rho"])
     q = quote_fixtures.get((casa, trasf))
     if q is not None:
-        Ma = matrice_ancorata(senza_margine(q), None, modello["rho"], (lh, la))
+        Ma = matrice_ancorata(q, None, modello["rho"], (lh, la))
         return {"M_1x2": Ma, "M_gol": Ma, "M_es": Ma, "ancorata": True, "fonte": "ancorata alle quote reali"}
     Mg = pesi["gol"] * Mb + (1 - pesi["gol"]) * M_freq_live
     Me = pesi["esatto"] * Mb + (1 - pesi["esatto"]) * M_freq_live
@@ -767,7 +818,6 @@ if is_intl:
         st.warning(f"Dati insufficienti per {campionato}. Prova a cambiare competizione o stagione.")
         st.stop()
     quote_fixtures_raw = carica_odds_api(chiave_odds, INTL_COMPS[campionato]["odds_key"])
-    # Mappiamo i nomi delle quote API per farli combaciare con quelli di football-data.org
     squadre_modello = sorted(set(df_storico["HomeTeam"]) | set(df_storico["AwayTeam"]))
     all_odds_teams = set([k[0] for k in quote_fixtures_raw.keys()] + [k[1] for k in quote_fixtures_raw.keys()])
     mappa = mappa_nomi(list(all_odds_teams), squadre_modello)
@@ -789,7 +839,6 @@ modello = adatta_modello(df_storico, pd.Timestamp.now().normalize(), par["ridge"
 
 # Costruzione Calendario
 if is_intl:
-    # Per le competizioni internazionali usiamo le partite dell'API come calendario
     calendario = pd.DataFrame()
     if chiave_fd:
         url = f"https://api.football-data.org/v4/competitions/{INTL_COMPS[campionato]['fd_id']}/matches?status=SCHEDULED"
