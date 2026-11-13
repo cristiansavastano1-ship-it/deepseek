@@ -781,7 +781,7 @@ def distribuzione_live(casa, trasf, modello, pesi, M_freq_live, quote_fixtures):
     return {"M_1x2": Mb, "M_gol": Mg, "M_es": Me, "ancorata": False, "fonte": "modello + frequenze storiche"}
 
 # ============================================================
-# FUNZIONI DI SUPPORTO PER I PESI (Mancavano!)
+# FUNZIONI DI SUPPORTO PER I PESI
 # ============================================================
 def pesi_ottimi(res):
     xs, ys = res["xs"], res["ys"]
@@ -950,8 +950,10 @@ if is_intl:
             righe = []
             for m in res.json().get("matches", []):
                 ts = pd.to_datetime(m["utcDate"], utc=True).tz_convert("Europe/Rome")
-                righe.append({"Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": m["homeTeam"]["name"], "Trasferta": m["awayTeam"]["name"], "Stato": m["status"]})
+                righe.append({"Giornata": m.get("matchday") or 1, "Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": m["homeTeam"]["name"], "Trasferta": m["awayTeam"]["name"], "Stato": m["status"]})
             calendario = pd.DataFrame(righe)
+            if not calendario.empty:
+                calendario["Giornata"] = calendario["Giornata"].astype(int)
 else:
     fx, fx_err = carica_fixtures(div)
     calendario, fonte_cal = costruisci_calendario(div, df_storico, fx, chiave_fd, modello["squadre"])
@@ -1055,15 +1057,36 @@ _{motivo_g}_
     st.plotly_chart(crea_heatmap(M), use_container_width=True)
 
 with tabs[0]:
-    if calendario.empty: st.info("Nessuna partita disponibile.")
+    if calendario.empty: 
+        st.info("Nessuna partita disponibile.")
     else:
-        for idx, row in calendario.iterrows():
-            if "Data" in row and pd.notna(row["Data"]):
-                st.markdown(f"""<div style="background: #111827; padding: 18px; border-radius: 12px; border: 1px solid #1f2937; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;"><div><span style="font-weight: 700; font-size: 1.05rem;">{row['Casa']}</span><span style="color: #94a3b8; margin: 0 8px;">vs</span><span style="font-weight: 700; font-size: 1.05rem;">{row['Trasferta']}</span><br><span style="color: #64748b; font-size: 12px;">📅 {row['Data']} {row.get('Ora', '')}</span></div></div>""", unsafe_allow_html=True)
-                if st.button("📊 Analizza Match", key=f"btn_{idx}"):
-                    st.session_state["match_attivo"] = {"div": div, "casa": row["Casa"], "trasf": row["Trasferta"], "data": row["Data"], "ora": row.get("Ora", "")}
+        if "Giornata" not in calendario.columns:
+            calendario["Giornata"] = 1
+        giornate = sorted(g for g in calendario["Giornata"].unique() if g)
+        if not giornate: giornate = [1]
+            
+        non_giocate = calendario[calendario["Stato"] != "FINISHED"] if "Stato" in calendario.columns else calendario
+        g_def = int(non_giocate["Giornata"].min()) if not non_giocate.empty and non_giocate["Giornata"].min() else int(giornate[-1])
+        
+        cc1, cc2 = st.columns(2)
+        cc1.selectbox("🏆 Torneo", [campionato], key="cal_torneo")
+        giornata_sel = cc2.selectbox("📅 Giornata", giornate, index=giornate.index(g_def) if g_def in giornate else 0, key="cal_giornata")
+        
+        cal_filtrato = calendario[calendario["Giornata"] == giornata_sel]
+        for idx, row in cal_filtrato.iterrows():
+            gc = row["GolC"] if "GolC" in row and pd.notna(row["GolC"]) else "-"
+            gt = row["GolT"] if "GolT" in row and pd.notna(row["GolT"]) else "-"
+            gc = int(gc) if gc != "-" else gc
+            gt = int(gt) if gt != "-" else gt
+            
+            st.markdown(f"""<div style="background: #111827; padding: 18px; border-radius: 12px; border: 1px solid #1f2937; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;"><div><span style="font-weight: 700; font-size: 1.05rem;">{row['Casa']}</span><span style="color: #94a3b8; margin: 0 8px;">vs</span><span style="font-weight: 700; font-size: 1.05rem;">{row['Trasferta']}</span><br><span style="color: #64748b; font-size: 12px;">📅 {row.get('Data', '')} {row.get('Ora', '')}</span></div><div style="text-align: right;"><span style="background: #1e293b; color: {COL_PRIMARIO}; padding: 6px 14px; border-radius: 8px; font-weight: 700; font-size: 1.1rem;">{gc} - {gt}</span></div></div>""", unsafe_allow_html=True)
+            
+            if st.button("📊 Analizza Match", key=f"btn_{div}_{idx}"):
+                st.session_state["match_attivo"] = {"div": div, "casa": row["Casa"], "trasf": row["Trasferta"], "data": row.get("Data", ""), "ora": row.get("Ora", "")}
+                
         att_m = st.session_state.get("match_attivo")
-        if att_m and att_m.get("div") == div: mostra_analisi(att_m["casa"], att_m["trasf"], att_m["data"], att_m["ora"])
+        if att_m and att_m.get("div") == div: 
+            mostra_analisi(att_m["casa"], att_m["trasf"], att_m["data"], att_m["ora"])
 
 with tabs[1]:
     st.subheader("📋 Multipla Builder & Pronostici")
