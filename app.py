@@ -781,6 +781,109 @@ def distribuzione_live(casa, trasf, modello, pesi, M_freq_live, quote_fixtures):
     return {"M_1x2": Mb, "M_gol": Mg, "M_es": Me, "ancorata": False, "fonte": "modello + frequenze storiche"}
 
 # ============================================================
+# FUNZIONI DI SUPPORTO PER I PESI (Mancavano!)
+# ============================================================
+def pesi_ottimi(res):
+    xs, ys = res["xs"], res["ys"]
+    esito, outc = _esiti(xs, ys)
+    Mb, Mf = res["Ms"]["Modello"], res["Ms"]["Frequenze"]
+    gol, esatto = {}, {}
+    for w in W_GRID:
+        Mw = w * Mb + (1 - w) * Mf
+        gol[w] = float(np.mean([_vettore_perdita(Mw, k_, xs, ys, outc, esito).mean() for k_ in ("over1.5", "over2.5", "over3.5", "btts")]))
+        esatto[w] = float(_vettore_perdita(Mw, "exact", xs, ys, outc, esito).mean())
+    return {"gol": min(gol, key=gol.get), "esatto": min(esatto, key=esatto.get), "n": len(xs), "auto": True}
+
+def scegli_metodo_margine(df):
+    metodi = ("proporzionale", "potenza", "shin")
+    perdite = {m: {"ap": [], "ch": []} for m in metodi}
+    for _, r in df.iterrows():
+        es = 0 if r["FTHG"] > r["FTAG"] else (1 if r["FTHG"] == r["FTAG"] else 2)
+        qa, qc = prima_tripla(r, COL_PRESA), prima_tripla(r, COL_CHIUSURA)
+        for m in metodi:
+            if qa: perdite[m]["ap"].append(-math.log(max(float(senza_margine(qa, m)[es]), 1e-9)))
+            if qc: perdite[m]["ch"].append(-math.log(max(float(senza_margine(qc, m)[es]), 1e-9)))
+    if len(perdite["proporzionale"]["ap"]) < 100: return "proporzionale", pd.DataFrame()
+    righe = []
+    base = np.array(perdite["proporzionale"]["ap"])
+    for m in metodi:
+        ap = np.array(perdite[m]["ap"]); ch = np.array(perdite[m]["ch"])
+        righe.append({"Metodo": m, "Partite": len(ap), "Log loss apertura": round(float(ap.mean()), 4), "Differenza (± err.)": "" if m == "proporzionale" else _diff_se(ap, base), "Log loss chiusura": round(float(ch.mean()), 4) if len(ch) else None})
+    best = min(metodi, key=lambda m: float(np.mean(perdite[m]["ap"])))
+    d_best = np.array(perdite[best]["ap"]) - base
+    se = d_best.std(ddof=1) / math.sqrt(len(d_best))
+    scelto = best if (best != "proporzionale" and d_best.mean() < 0 and abs(d_best.mean()) >= 1.0 * se) else "proporzionale"
+    tab = pd.DataFrame(righe)
+    tab["Usato dall'app"] = ["sì" if r["Metodo"] == scelto else "" for r in righe]
+    return scelto, tab
+
+@st.cache_data(ttl=6 * 3600, show_spinner="Calcolo pesi dal backtest (solo la prima volta)...")
+def pesi_blend_auto(div, ridge, halflife, giorno):
+    df = carica_storico(div, N_STAGIONI_TEST, giorno)
+    metodo, tab_margine = scegli_metodo_margine(df) if df is not None else ("proporzionale", pd.DataFrame())
+    METODO_MARGINE["m"] = metodo
+    res = esegui_test_completo(df, ridge, halflife, 28) if df is not None else None
+    if res is None or len(res["xs"]) < 100:
+        return {"gol": 0.5, "esatto": 0.75, "n": 0, "auto": False, "metodo_margine": metodo, "tab_margine": tab_margine}
+    w = pesi_ottimi(res)
+    w["metodo_margine"] = metodo; w["tab_margine"] = tab_margine
+    return w
+
+def _vettore_perdita(Mv, chiave, xs, ys, outc, esito):
+    if chiave == "1x2":
+        P = np.stack([_p_mercato(Mv, "p1"), _p_mercato(Mv, "px"), _p_mercato(Mv, "p2")], axis=1)
+        return -np.log(np.clip(P[np.arange(len(esito)), esito], 1e-9, 1))
+    if chiave == "exact":
+        return -np.log(np.clip(Mv[np.arange(len(Mv)), xs, ys], 1e-12, 1))
+    p = np.clip(_p_mercato(Mv, chiave), 1e-9, 1 - 1e-9)
+    o = outc[chiave]
+    return -(o * np.log(p) + (1 - o) * np.log(1 - p))
+
+def _p_mercato(Ms, chiave): return (Ms * _MASK[chiave]).sum(axis=(1, 2))
+
+def esegui_test_completo(df, ridge, halflife, passo, inizio=None):
+    stagioni = sorted(df["Stag"].unique())
+    if len(stagioni) < 2: return None
+    t = inizio if inizio is not None else df.loc[df["Stag"] == stagioni[1], "Date"].min()
+    fine = df["Date"].max()
+    rec = {"Partita": [], "xs": [], "ys": [], "ok": [], "ou_ok": [], "m1x2": [], "mou": [], "min_storia": [], "date": []}
+    Ms = {"Modello": [], "Ancorato": [], "Frequenze": []}
+    while t <= fine:
+        blocco = df[(df["Date"] >= t) & (df["Date"] < t + pd.Timedelta(days=passo))]
+        train = df[(df["Date"] < t) & (df["Date"] >= t - pd.Timedelta(days=FINESTRA_GIORNI))]
+        if len(blocco) and len(train) >= 150:
+            m = adatta_modello(train, t, ridge, halflife, True)
+            cnt = pd.concat([train["HomeTeam"], train["AwayTeam"]]).value_counts()
+            m_freq = matrice_frequenze(train)
+            for _, r in blocco.iterrows():
+                h, a = r["HomeTeam"], r["AwayTeam"]
+                lh, la = lambda_partita(m, h, a)
+                Mb = matrice_punteggi(lh, la, m["rho"])
+                qp, qo = prima_tripla(r, COL_PRESA), prima_coppia(r, COL_OU_PRESA)
+                if qp:
+                    p_o = float(senza_margine(qo)[0]) if qo else None
+                    Ma = matrice_ancorata(senza_margine(qp), p_o, m["rho"], (lh, la))
+                else:
+                    Ma = np.full((11, 11), np.nan)
+                qc, qoc = prima_tripla(r, COL_CHIUSURA), prima_coppia(r, COL_OU_CHIUSURA)
+                rec["Partita"].append(f"{h} - {a}")
+                rec["date"].append(r["Date"])
+                rec["xs"].append(min(int(r["FTHG"]), 10))
+                rec["ys"].append(min(int(r["FTAG"]), 10))
+                rec["ok"].append(bool(qp))
+                rec["ou_ok"].append(bool(qp and qoc))
+                rec["m1x2"].append(senza_margine(qc) if qc else np.full(3, np.nan))
+                rec["mou"].append(float(senza_margine(qoc)[0]) if qoc else np.nan)
+                rec["min_storia"].append(int(min(cnt.get(h, 0), cnt.get(a, 0))))
+                for nome, Mv in {"Modello": Mb, "Ancorato": Ma, "Frequenze": m_freq}.items(): Ms[nome].append(Mv)
+        t += pd.Timedelta(days=passo)
+    if not rec["xs"]: return None
+    out = {k: np.array(v) for k, v in rec.items() if k != "Partita"}
+    out["Partita"] = rec["Partita"]
+    out["Ms"] = {k: np.array(v) for k, v in Ms.items()}
+    return out
+
+# ============================================================
 # UI PRINCIPALE
 # ============================================================
 try: _chiave_fd = st.secrets.get("FOOTBALL_DATA_API_KEY", "")
@@ -930,7 +1033,12 @@ _{motivo_g}_
         st.markdown(f"""<div style="text-align: center; padding: 30px 20px; background: rgba(15,23,42,0.6); border-radius: 14px; border: 1px solid #1e293b;"><h2 style="color: {COL_CASA}; margin: 0; font-size: 1.4rem;">{casa}</h2><p style="color: #64748b; margin: 5px 0 20px 0; font-size: 0.85rem;">CASA</p><h3 style="color: {COL_ACCENTO}; margin: 0; font-size: 1.2rem;">VS</h3><h2 style="color: {COL_TRASF}; margin: 20px 0 0 0; font-size: 1.4rem;">{trasf}</h2><p style="color: #64748b; margin: 5px 0 0 0; font-size: 0.85rem;">TRASFERTA</p></div>""", unsafe_allow_html=True)
     with col_st:
         st.markdown("<p style='text-align: center; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px;'>STATISTICHE ATTESE</p>", unsafe_allow_html=True)
-        st.info("Statistiche dettagliate (Tiri, Corner) non disponibili per le competizioni internazionali tramite questa API.")
+        if is_intl:
+            st.info("Statistiche dettagliate (Tiri, Corner) non disponibili per le competizioni internazionali tramite questa API.")
+        else:
+            righe_st = {"Gol Attesi": (round(lh, 2), round(la, 2))}; righe_st.update(stats_attese(df_storico, casa, trasf))
+            for label, (vc, vt) in righe_st.items():
+                st.markdown(f"""<div style="display: flex; justify-content: space-between; background: #111827; padding: 12px 18px; border-radius: 10px; border: 1px solid #1f2937; margin-bottom: 10px;"><span style="font-weight: 700; color: {COL_CASA}; width: 60px;">{vc}</span><span style="color: #94a3b8; text-align: center; flex-grow: 1;">{label}</span><span style="font-weight: 700; color: {COL_TRASF}; width: 60px; text-align: right;">{vt}</span></div>""", unsafe_allow_html=True)
 
     st.markdown(f"#### 📊 Mercati 1X2", unsafe_allow_html=True)
     a1, a2, a3 = st.columns(3)
