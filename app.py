@@ -24,7 +24,6 @@ from scipy.stats import binom, nbinom, poisson
 # ============================================================
 st.set_page_config(page_title="Combo Master 4.0", layout="wide", page_icon="⚽")
 
-# Campionati (fonte: football-data.co.uk)
 LEAGUES = {
     "Serie A (Italia)": "I1", "Premier League (Inghilterra)": "E0",
     "La Liga (Spagna)": "SP1", "Bundesliga (Germania)": "D1",
@@ -37,7 +36,6 @@ API_CODICI = {
     "F1": "FL1", "N1": "DED", "P1": "PPL", "E1": "ELC", "B1": "JPL", "T1": "TSL"
 }
 
-# Competizioni Internazionali (Supportate dal piano gratuito di football-data.org)
 INTL_COMPS = {
     "Champions League": {"fd_id": "CL", "odds_key": "soccer_uefa_champs_league"},
     "Europei": {"fd_id": "EC", "odds_key": "soccer_uefa_euro"},
@@ -912,6 +910,24 @@ def esegui_test_completo(df, ridge, halflife, passo, inizio=None):
     return out
 
 # ============================================================
+# FUNZIONI PER MONTE CARLO E REPORT
+# ============================================================
+def simula_montecarlo(bankroll, stake, n_bets, probs, odds):
+    percorsi = []
+    for _ in range(100):
+        b = bankroll
+        storia = [b]
+        for _ in range(n_bets):
+            idx = np.random.randint(0, len(probs))
+            if np.random.rand() <= probs[idx]:
+                b += stake * (odds[idx] - 1)
+            else:
+                b -= stake
+            storia.append(b)
+        percorsi.append(storia)
+    return np.array(percorsi)
+
+# ============================================================
 # UI PRINCIPALE
 # ============================================================
 try: _chiave_fd = st.secrets.get("FOOTBALL_DATA_API_KEY", "")
@@ -994,7 +1010,7 @@ freq_combo = frequenze_combo(df_storico)
 split_live = tabella_split(df_storico)
 oggi_ts = pd.Timestamp.now().normalize()
 
-tabs = st.tabs(["📅 Calendario", "📋 Pronostici", "🏆 Classifica", "⚡ Value Finder", "🧮 Kelly"])
+tabs = st.tabs(["📅 Calendario", "📋 Pronostici", "🏆 Classifica", "⚡ Value Finder", "🎲 Monte Carlo", "📄 Report", "🧮 Kelly"])
 
 def mostra_analisi(casa, trasf, data, ora):
     d = distribuzione_live(casa, trasf, modello, pesi, M_freq_live, quote_fixtures)
@@ -1072,7 +1088,6 @@ _{motivo_g}_
             for label, (vc, vt) in righe_st.items():
                 st.markdown(f"""<div style="display: flex; justify-content: space-between; background: #111827; padding: 12px 18px; border-radius: 10px; border: 1px solid #1f2937; margin-bottom: 10px;"><span style="font-weight: 700; color: {COL_CASA}; width: 60px;">{vc}</span><span style="color: #94a3b8; text-align: center; flex-grow: 1;">{label}</span><span style="font-weight: 700; color: {COL_TRASF}; width: 60px; text-align: right;">{vt}</span></div>""", unsafe_allow_html=True)
             
-            # RADAR CHART
             st.markdown("#### 🕸️ Profilo delle due squadre")
             st.plotly_chart(crea_radar_chart(casa, trasf, righe_st), use_container_width=True)
 
@@ -1170,6 +1185,62 @@ with tabs[3]:
         else: st.info("Nessuna selezione con questi filtri.")
 
 with tabs[4]:
+    st.subheader("🎲 Simulatore Monte Carlo Bankroll")
+    st.markdown("Simula il tuo bankroll su un numero di scommesse consecutive, usando le probabilità e le quote del Value Finder corrente. Serve a farti capire la **varianza** (la sfortuna) e il **rischio di rovina**.")
+    
+    if "df_val" not in locals() or df_val is None or df_val.empty:
+        st.info("Serve il Value Finder con quote reali per far girare la simulazione. Vai nella scheda Value Finder e imposta un Edge minimo.")
+    else:
+        c1, c2, c3 = st.columns(3)
+        bankroll_iniziale = c1.number_input("Bankroll Iniziale (€)", 100.0, 10000.0, 1000.0, step=100.0)
+        stake = c2.number_input("Stake per giocata (€)", 1.0, 500.0, 20.0, step=5.0)
+        n_bets = c3.slider("Numero di scommesse", 10, 500, 100, step=10)
+        
+        if st.button("🚀 Simula"):
+            probs = df_val["Prob_Modello"].values / 100
+            odds = df_val["Quota_Book"].values
+            
+            percorsi = simula_montecarlo(bankroll_iniziale, stake, n_bets, probs, odds)
+            
+            # Statistiche finali
+            finali = percorsi[:, -1]
+            media_finale = np.mean(finali)
+            perc_rovina = np.mean(finali <= 0) * 100
+            
+            m1, m2 = st.columns(2)
+            m1.metric("Bankroll Medio Finale", f"€{media_finale:.2f}")
+            m2.metric("Probabilità di Rovina", f"{perc_rovina:.1f}%", "bassa" if perc_rovina < 5 else "alta", delta_color="off")
+            
+            # Grafico
+            fig = go.Figure()
+            for i in range(100):
+                fig.add_trace(go.Scatter(x=np.arange(n_bets+1), y=percorsi[i], mode='lines', line=dict(width=1, color='#38bdf8'), opacity=0.1, showlegend=False))
+            
+            fig.add_trace(go.Scatter(x=np.arange(n_bets+1), y=np.mean(percorsi, axis=0), mode='lines', line=dict(width=3, color='#f43f5e'), name='Media'))
+            fig.add_hline(y=bankroll_iniziale, line_dash="dash", line_color="#64748b", annotation_text="Bankroll Iniziale")
+            fig.add_hline(y=0, line_dash="dash", line_color="#ef4444", annotation_text="Rovina")
+            
+            fig.update_layout(title="Simulazione Monte Carlo: 100 Percorsi", xaxis_title="Numero di scommesse", yaxis_title="Bankroll (€)", template="plotly_dark", height=500)
+            st.plotly_chart(fig, use_container_width=True)
+
+with tabs[5]:
+    st.subheader("📄 Report Settimanale")
+    st.markdown("Genera un file CSV con tutte le analisi del weekend (quote, edge, probabilità, stake Kelly) da scaricare e consultare.")
+    
+    if "df_val" not in locals() or df_val is None or df_val.empty:
+        st.info("Nessun dato disponibile per il report. Controlla il Value Finder.")
+    else:
+        # Prepariamo il dataframe
+        df_report = df_val.copy()
+        df_report["Kelly Stake (25%)"] = df_report.apply(lambda r: max(0, ((r["Quota_Book"]-1)*(r["Prob_Modello"]/100) - (1 - r["Prob_Modello"]/100)) / (r["Quota_Book"]-1)) * 0.25 * 1000, axis=1).round(2)
+        df_report = df_report.rename(columns={"Prob_Modello": "Prob. Modello %", "Prob_Mercato": "Prob. Mercato %", "Quota_Book": "Quota", "Kelly Stake (25%)": "Stake (€)"})
+        
+        st.dataframe(df_report, use_container_width=True, hide_index=True)
+        
+        csv = df_report.to_csv(index=False).encode('utf-8')
+        st.download_button(label="⬇️ Scarica Report CSV", data=csv, file_name=f"report_{campionato}_{giorno}.csv", mime="text/csv")
+
+with tabs[6]:
     st.subheader("🧮 Calcolatore Kelly")
     c1, c2, c3 = st.columns(3)
     p_default = st.session_state.get("kelly_p", 45.0); q_default = st.session_state.get("kelly_q", 2.30)
