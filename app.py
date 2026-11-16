@@ -24,6 +24,7 @@ from scipy.stats import binom, nbinom, poisson
 # ============================================================
 st.set_page_config(page_title="Combo Master 4.0", layout="wide", page_icon="⚽")
 
+# Campionati principali (fonte: football-data.co.uk/mmz4281)
 LEAGUES = {
     "Serie A (Italia)": "I1", "Premier League (Inghilterra)": "E0",
     "La Liga (Spagna)": "SP1", "Bundesliga (Germania)": "D1",
@@ -31,6 +32,19 @@ LEAGUES = {
     "Primeira Liga (Portogallo)": "P1", "Championship (Inghilterra)": "E1",
     "Jupiler Pro League (Belgio)": "B1", "Super Lig (Turchia)": "T1",
 }
+
+# Campionati Extra (fonte: football-data.co.uk/new)
+EXTRA_LEAGUES = {
+    "Brasile (Serie A)": "BRA", "Argentina (Primera)": "ARG",
+    "USA (MLS)": "USA", "Messico (Liga MX)": "MEX",
+    "Giappone (J1)": "JPN", "Cina (Super League)": "CHN",
+    "Danimarca (Superliga)": "DNK", "Finlandia (Veikkausliiga)": "FIN",
+    "Irlanda (Premier Division)": "IRL", "Norvegia (Eliteserien)": "NOR",
+    "Polonia (Ekstraklasa)": "POL", "Romania (Liga I)": "ROU",
+    "Russia (Premier League)": "RUS", "Svezia (Allsvenskan)": "SWE",
+    "Svizzera (Super League)": "SWZ", "Austria (Bundesliga)": "AUT"
+}
+
 API_CODICI = {
     "I1": "SA", "E0": "PL", "SP1": "PD", "D1": "BL1", 
     "F1": "FL1", "N1": "DED", "P1": "PPL", "E1": "ELC", "B1": "JPL", "T1": "TSL"
@@ -243,27 +257,46 @@ def _diff_se(a, b):
 # ============================================================
 @st.cache_data(ttl=6 * 3600)
 def carica_storico(div, n_stagioni, giorno):
-    oggi = date.today()
-    anno = oggi.year if oggi.month >= 7 else oggi.year - 1
-    frames = []
-    for k in range(n_stagioni):
-        y = anno - k
-        codice = f"{y % 100:02d}{(y + 1) % 100:02d}"
-        d, _ = _leggi_csv(f"{BASE_URL}/mmz4281/{codice}/{div}.csv")
-        if d is None or not {"Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"}.issubset(d.columns): continue
-        d["Stag"] = y
-        frames.append(d)
-    if not frames: return None
-    df = pd.concat(frames, ignore_index=True)
-    df = df.dropna(subset=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]).copy()
-    df["Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce", format="mixed")
-    df = df.dropna(subset=["Date"])
-    df["FTHG"] = df["FTHG"].astype(int)
-    df["FTAG"] = df["FTAG"].astype(int)
-    return df.sort_values("Date").reset_index(drop=True)
+    if div in EXTRA_LEAGUES.values():
+        d, _ = _leggi_csv(f"https://www.football-data.co.uk/new/{div}.csv")
+        if d is None: return None
+        # Mappatura colonne per campionati extra
+        col_map = {"Home": "HomeTeam", "Away": "AwayTeam", "HG": "FTHG", "AG": "FTAG"}
+        d = d.rename(columns=col_map)
+        if "Date" not in d.columns: return None
+        d["Date"] = pd.to_datetime(d["Date"], dayfirst=True, errors="coerce", format="mixed")
+        d = d.dropna(subset=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]).copy()
+        d["FTHG"] = d["FTHG"].astype(int)
+        d["FTAG"] = d["FTAG"].astype(int)
+        d["Stag"] = d["Date"].dt.year
+        stagioni = sorted(d["Stag"].unique())[-n_stagioni:]
+        d = d[d["Stag"].isin(stagioni)].copy()
+        return d.sort_values("Date").reset_index(drop=True)
+    else:
+        oggi = date.today()
+        anno = oggi.year if oggi.month >= 7 else oggi.year - 1
+        frames = []
+        for k in range(n_stagioni):
+            y = anno - k
+            codice = f"{y % 100:02d}{(y + 1) % 100:02d}"
+            d, _ = _leggi_csv(f"{BASE_URL}/mmz4281/{codice}/{div}.csv")
+            if d is None or not {"Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"}.issubset(d.columns): continue
+            d["Stag"] = y
+            frames.append(d)
+        if not frames: return None
+        df = pd.concat(frames, ignore_index=True)
+        df = df.dropna(subset=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]).copy()
+        df["Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce", format="mixed")
+        df = df.dropna(subset=["Date"])
+        df["FTHG"] = df["FTHG"].astype(int)
+        df["FTAG"] = df["FTAG"].astype(int)
+        return df.sort_values("Date").reset_index(drop=True)
 
 @st.cache_data(ttl=3600)
 def carica_fixtures(div):
+    # I campionati extra non hanno un file fixtures separato
+    if div in EXTRA_LEAGUES.values(): return None, "Campionato extra: nessun calendario futuro disponibile"
+    
     d, err = _leggi_csv(f"{BASE_URL}/fixtures.csv")
     if d is None: return None, err
     if not {"Div", "HomeTeam", "AwayTeam"}.issubset(d.columns): return None, "colonne attese non trovate"
@@ -291,7 +324,7 @@ def assegna_giornate(righe):
     return righe
 
 def costruisci_calendario(div, df_storico, fx, chiave, squadre_modello):
-    dati = scarica_calendario_api(chiave, API_CODICI[div]) if chiave else None
+    dati = scarica_calendario_api(chiave, API_CODICI[div]) if chiave and div in API_CODICI else None
     if dati and dati.get("matches"):
         nomi = {m["homeTeam"]["name"] for m in dati["matches"]} | {m["awayTeam"]["name"] for m in dati["matches"]}
         nomi = {n for n in nomi if n}
@@ -308,7 +341,7 @@ def costruisci_calendario(div, df_storico, fx, chiave, squadre_modello):
     righe = []
     stag = df_storico[df_storico["Stag"] == df_storico["Stag"].max()]
     for _, r in stag.iterrows():
-        righe.append({"Data": r["Date"].strftime("%Y-%m-%d"), "Ora": str(r["Time"])[:5] if "Time" in r and pd.notna(r.get("Time")) else "", "Casa": r["HomeTeam"], "Trasferta": r["AwayTeam"], "GolC": int(r["FTHG"]), "GolT": int(r["FTAG"]), "Stato": "FINISHED", "_d": r["Date"]})
+        righe.append({"Data": r["Date"].strftime("%Y-%m-%d"), "Ora": str(r.get("Time", ""))[:5] if pd.notna(r.get("Time")) else "", "Casa": r["HomeTeam"], "Trasferta": r["AwayTeam"], "GolC": int(r["FTHG"]), "GolT": int(r["FTAG"]), "Stato": "FINISHED", "_d": r["Date"]})
     giocate = {(r["Data"], r["Casa"], r["Trasferta"]) for r in righe}
     if fx is not None:
         for _, r in fx.iterrows():
@@ -943,10 +976,14 @@ st.sidebar.caption("Le chiavi servono per le competizioni internazionali e le qu
 st.sidebar.markdown("---")
 
 # Selezione Competizione
-tipo_comp = st.sidebar.radio("Tipo di competizione", ["Campionati Nazionali", "Competizioni Internazionali"])
-if tipo_comp == "Campionati Nazionali":
+tipo_comp = st.sidebar.radio("Tipo di competizione", ["Campionati Principali", "Campionati Extra", "Competizioni Internazionali"])
+if tipo_comp == "Campionati Principali":
     campionato = st.selectbox("Scegli il torneo", list(LEAGUES.keys()), label_visibility="collapsed")
     div = LEAGUES[campionato]
+    is_intl = False
+elif tipo_comp == "Campionati Extra":
+    campionato = st.selectbox("Scegli il torneo", list(EXTRA_LEAGUES.keys()), label_visibility="collapsed")
+    div = EXTRA_LEAGUES[campionato]
     is_intl = False
 else:
     campionato = st.selectbox("Scegli il torneo", list(INTL_COMPS.keys()), label_visibility="collapsed")
@@ -1081,8 +1118,8 @@ _{motivo_g}_
         st.markdown(f"""<div style="text-align: center; padding: 30px 20px; background: rgba(15,23,42,0.6); border-radius: 14px; border: 1px solid #1e293b;"><h2 style="color: {COL_CASA}; margin: 0; font-size: 1.4rem;">{casa}</h2><p style="color: #64748b; margin: 5px 0 20px 0; font-size: 0.85rem;">CASA</p><h3 style="color: {COL_ACCENTO}; margin: 0; font-size: 1.2rem;">VS</h3><h2 style="color: {COL_TRASF}; margin: 20px 0 0 0; font-size: 1.4rem;">{trasf}</h2><p style="color: #64748b; margin: 5px 0 0 0; font-size: 0.85rem;">TRASFERTA</p></div>""", unsafe_allow_html=True)
     with col_st:
         st.markdown("<p style='text-align: center; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px;'>STATISTICHE ATTESE</p>", unsafe_allow_html=True)
-        if is_intl:
-            st.info("Statistiche dettagliate (Tiri, Corner) non disponibili per le competizioni internazionali tramite questa API.")
+        if is_intl or div in EXTRA_LEAGUES.values():
+            st.info("Statistiche dettagliate (Tiri, Corner) non disponibili per questa competizione tramite l'API.")
         else:
             righe_st = {"Gol Attesi": (round(lh, 2), round(la, 2))}; righe_st.update(stats_attese(df_storico, casa, trasf))
             for label, (vc, vt) in righe_st.items():
@@ -1136,6 +1173,16 @@ with tabs[0]:
         att_m = st.session_state.get("match_attivo")
         if att_m and att_m.get("div") == div: 
             mostra_analisi(att_m["casa"], att_m["trasf"], att_m["data"], att_m["ora"])
+            
+        # Sezione per l'analisi manuale dei campionati extra
+        st.markdown("---")
+        st.markdown("### 🔮 Analisi Manuale (per campionati senza calendario futuro)")
+        squadre_m = sorted(set(df_storico["HomeTeam"]) | set(df_storico["AwayTeam"]))
+        m1, m2 = st.columns(2)
+        sq_c = m1.selectbox("Casa", squadre_m, key="man_casa")
+        sq_t = m2.selectbox("Trasferta", [s for s in squadre_m if s != sq_c], key="man_trasf")
+        if st.button("📊 Analizza Partita Manuale", key="btn_man"):
+            mostra_analisi(sq_c, sq_t, "Oggi", "")
 
 with tabs[1]:
     st.subheader("📋 Multipla Builder & Pronostici")
@@ -1149,7 +1196,7 @@ with tabs[1]:
         quota_equa = round(1 / pp_[chiave_g], 2) if pp_[chiave_g] > 0 else 0
         righe_p.append({"Seleziona": False, "Data": riga["Data"], "Partita": f"{c_} - {t_}", "🎯 Giocata": NOMI_SCELTA[chiave_g], "Probabilità %": round(pp_[chiave_g]*100, 1), "Quota Equa": quota_equa})
     
-    if not righe_p: st.info("Nessuna partita futura.")
+    if not righe_p: st.info("Nessuna partita futura nel calendario.")
     else: 
         df_p = pd.DataFrame(righe_p)
         edited_df = st.data_editor(df_p, column_config={"Seleziona": st.column_config.CheckboxColumn("Aggiungi", default=False), "Probabilità %": st.column_config.NumberColumn(format="%.1f%%")}, disabled=["Data", "Partita", "🎯 Giocata", "Probabilità %", "Quota Equa"], hide_index=True, use_container_width=True)
@@ -1181,7 +1228,9 @@ with tabs[3]:
                 edge = (P[k] * q[k] - 1) * 100
                 if edge >= edge_min:
                     righe_v.append({"Partita": f"{casa} vs {trasf}", "Selezione": nomi[k], "Prob_Modello": round(P[k] * 100, 1), "Prob_Mercato": round(pm[k] * 100, 1), "Quota_Book": round(q[k], 2), "Edge": round(edge, 1)})
-        if righe_v: st.dataframe(pd.DataFrame(righe_v).sort_values("Edge", ascending=False), use_container_width=True, hide_index=True)
+        if righe_v: 
+            df_val = pd.DataFrame(righe_v).sort_values("Edge", ascending=False)
+            st.dataframe(df_val, use_container_width=True, hide_index=True)
         else: st.info("Nessuna selezione con questi filtri.")
 
 with tabs[4]:
