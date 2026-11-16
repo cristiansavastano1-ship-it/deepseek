@@ -29,16 +29,19 @@ LEAGUES = {
     "Serie A (Italia)": "I1", "Premier League (Inghilterra)": "E0",
     "La Liga (Spagna)": "SP1", "Bundesliga (Germania)": "D1",
     "Ligue 1 (Francia)": "F1", "Eredivisie (Olanda)": "N1",
+    "Primeira Liga (Portogallo)": "P1", "Championship (Inghilterra)": "E1",
+    "Jupiler Pro League (Belgio)": "B1", "Super Lig (Turchia)": "T1",
 }
-API_CODICI = {"I1": "SA", "E0": "PL", "SP1": "PD", "D1": "BL1", "F1": "FL1", "N1": "DED"}
+API_CODICI = {
+    "I1": "SA", "E0": "PL", "SP1": "PD", "D1": "BL1", 
+    "F1": "FL1", "N1": "DED", "P1": "PPL", "E1": "ELC", "B1": "JPL", "T1": "TSL"
+}
 
-# Competizioni Internazionali (fonte: football-data.org + The Odds API)
+# Competizioni Internazionali (Supportate dal piano gratuito di football-data.org)
 INTL_COMPS = {
     "Champions League": {"fd_id": "CL", "odds_key": "soccer_uefa_champs_league"},
-    "Europa League": {"fd_id": "EL", "odds_key": "soccer_uefa_europa_league"},
-    "Conference League": {"fd_id": "UECL", "odds_key": "soccer_uefa_europa_conference_league"},
-    "Nations League": {"fd_id": "UNL", "odds_key": "soccer_uefa_nations_league"},
-    "Europei (Qualificazioni)": {"fd_id": "EC", "odds_key": "soccer_uefa_euro_qualification"},
+    "Europei": {"fd_id": "EC", "odds_key": "soccer_uefa_euro"},
+    "Mondiali": {"fd_id": "WC", "odds_key": "soccer_fifa_world_cup"},
 }
 
 BASE_URL = "https://football-data.co.uk"
@@ -917,8 +920,8 @@ if is_intl:
         st.warning("Inserisci la chiave di football-data.org per caricare i dati delle competizioni internazionali.")
         st.stop()
     df_storico = carica_storico_intl(chiave_fd, INTL_COMPS[campionato]["fd_id"], N_STAGIONI, giorno)
-    if df_storico is None or len(df_storico) < 50:
-        st.warning(f"Dati insufficienti per {campionato}. Prova a cambiare competizione o stagione.")
+    if df_storico is None or len(df_storico) < 10: # Soglia abbassata per competizioni con meno partite
+        st.warning(f"Dati insufficienti per {campionato}. L'API gratuita non copre tutte le competizioni. Prova con Champions League o Europei.")
         st.stop()
     quote_fixtures_raw = carica_odds_api(chiave_odds, INTL_COMPS[campionato]["odds_key"])
     squadre_modello = sorted(set(df_storico["HomeTeam"]) | set(df_storico["AwayTeam"]))
@@ -948,9 +951,11 @@ if is_intl:
         res = requests.get(url, headers={"X-Auth-Token": chiave_fd}, timeout=TIMEOUT)
         if res.status_code == 200:
             righe = []
+            oggi_data = date.today()
             for m in res.json().get("matches", []):
                 ts = pd.to_datetime(m["utcDate"], utc=True).tz_convert("Europe/Rome")
-                righe.append({"Giornata": m.get("matchday") or 1, "Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": m["homeTeam"]["name"], "Trasferta": m["awayTeam"]["name"], "Stato": m["status"]})
+                if ts.date() >= oggi_data: # Filtro fondamentale per non far vedere partite vecchie
+                    righe.append({"Giornata": m.get("matchday") or 1, "Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": m["homeTeam"]["name"], "Trasferta": m["awayTeam"]["name"], "Stato": m["status"]})
             calendario = pd.DataFrame(righe)
             if not calendario.empty:
                 calendario["Giornata"] = calendario["Giornata"].astype(int)
@@ -1058,7 +1063,7 @@ _{motivo_g}_
 
 with tabs[0]:
     if calendario.empty: 
-        st.info("Nessuna partita disponibile.")
+        st.info("Nessuna partita futura disponibile.")
     else:
         if "Giornata" not in calendario.columns:
             calendario["Giornata"] = 1
