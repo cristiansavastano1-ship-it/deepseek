@@ -726,7 +726,7 @@ def esatti_per_tempo(M, df, quanti=4):
     return righe
 
 # ============================================================
-# FUNZIONI LIVE
+# FUNZIONI LIVE E RADAR CHART
 # ============================================================
 def stats_attese(df, casa, trasf, k=5):
     out = {}
@@ -739,6 +739,31 @@ def stats_attese(df, casa, trasf, k=5):
         dc, dt = d[d["HomeTeam"] == casa], d[d["AwayTeam"] == trasf]
         out[nome] = (round((sm(dc[h], lega_h) + sm(dt[h], lega_h)) / 2, 1), round((sm(dt[a], lega_a) + sm(dc[a], lega_a)) / 2, 1))
     return out
+
+def crea_radar_chart(casa, trasf, righe_st):
+    categories = list(righe_st.keys())
+    v_c, v_t = [], []
+    for cat in categories:
+        vc, vt = righe_st[cat]
+        max_val = max(vc, vt, 0.1)
+        v_c.append(round(vc / max_val * 100, 1))
+        v_t.append(round(vt / max_val * 100, 1))
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=v_c + [v_c[0]], theta=categories + [categories[0]],
+        fill='toself', name=casa, line=dict(color=COL_CASA)
+    ))
+    fig.add_trace(go.Scatterpolar(
+        r=v_t + [v_t[0]], theta=categories + [categories[0]],
+        fill='toself', name=trasf, line=dict(color=COL_TRASF)
+    ))
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=False, range=[0, 100])),
+        showlegend=True, template="plotly_dark", height=400,
+        margin=dict(l=40, r=40, t=40, b=20)
+    )
+    return fig
 
 def ultimi_5_risultati(df, squadra):
     d = df[(df["HomeTeam"] == squadra) | (df["AwayTeam"] == squadra)].sort_values("Date").tail(5)
@@ -920,7 +945,7 @@ if is_intl:
         st.warning("Inserisci la chiave di football-data.org per caricare i dati delle competizioni internazionali.")
         st.stop()
     df_storico = carica_storico_intl(chiave_fd, INTL_COMPS[campionato]["fd_id"], N_STAGIONI, giorno)
-    if df_storico is None or len(df_storico) < 10: # Soglia abbassata per competizioni con meno partite
+    if df_storico is None or len(df_storico) < 10:
         st.warning(f"Dati insufficienti per {campionato}. L'API gratuita non copre tutte le competizioni. Prova con Champions League o Europei.")
         st.stop()
     quote_fixtures_raw = carica_odds_api(chiave_odds, INTL_COMPS[campionato]["odds_key"])
@@ -954,7 +979,7 @@ if is_intl:
             oggi_data = date.today()
             for m in res.json().get("matches", []):
                 ts = pd.to_datetime(m["utcDate"], utc=True).tz_convert("Europe/Rome")
-                if ts.date() >= oggi_data: # Filtro fondamentale per non far vedere partite vecchie
+                if ts.date() >= oggi_data:
                     righe.append({"Giornata": m.get("matchday") or 1, "Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": m["homeTeam"]["name"], "Trasferta": m["awayTeam"]["name"], "Stato": m["status"]})
             calendario = pd.DataFrame(righe)
             if not calendario.empty:
@@ -1046,6 +1071,10 @@ _{motivo_g}_
             righe_st = {"Gol Attesi": (round(lh, 2), round(la, 2))}; righe_st.update(stats_attese(df_storico, casa, trasf))
             for label, (vc, vt) in righe_st.items():
                 st.markdown(f"""<div style="display: flex; justify-content: space-between; background: #111827; padding: 12px 18px; border-radius: 10px; border: 1px solid #1f2937; margin-bottom: 10px;"><span style="font-weight: 700; color: {COL_CASA}; width: 60px;">{vc}</span><span style="color: #94a3b8; text-align: center; flex-grow: 1;">{label}</span><span style="font-weight: 700; color: {COL_TRASF}; width: 60px; text-align: right;">{vt}</span></div>""", unsafe_allow_html=True)
+            
+            # RADAR CHART
+            st.markdown("#### 🕸️ Profilo delle due squadre")
+            st.plotly_chart(crea_radar_chart(casa, trasf, righe_st), use_container_width=True)
 
     st.markdown(f"#### 📊 Mercati 1X2", unsafe_allow_html=True)
     a1, a2, a3 = st.columns(3)
@@ -1126,6 +1155,7 @@ with tabs[3]:
     if not quote_fixtures: st.info("Nessuna quota disponibile tramite The Odds API.")
     else:
         edge_min = st.slider("Edge Minimo (%)", 0.0, 25.0, 3.0)
+        st.markdown(f"L'Edge è il vantaggio percentuale della quota rispetto alla probabilità. {tooltip_testo('Edge = (Probabilità Modello x Quota Bookmaker) - 1. Se positivo, la quota offerta è più alta di quella equa.')}", unsafe_allow_html=True)
         righe_v = []
         for (casa, trasf), q in quote_fixtures.items():
             lh, la = lambda_partita(modello, casa, trasf)
@@ -1147,4 +1177,4 @@ with tabs[4]:
     q_book = c2.number_input("Quota Bookmaker", 1.01, 50.0, float(q_default))
     bankroll = c3.number_input("Bankroll (€)", 10.0, 100000.0, 1000.0)
     b, p = q_book - 1, p_stim / 100; kelly_fraction = max(0.0, (b * p - (1 - p)) / b) * 0.25
-    st.metric(f"Stake (Kelly 25%)", f"€{bankroll*kelly_fraction:.2f}")
+    st.metric(f"Stake (Kelly 25%) {tooltip_testo('Il criterio di Kelly calcola la percentuale ottimale del bankroll da puntare. Usiamo il 25% del valore pieno per ridurre la varianza.')}", f"€{bankroll*kelly_fraction:.2f}")
