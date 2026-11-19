@@ -45,6 +45,26 @@ EXTRA_LEAGUES = {
     "Svizzera (Super League)": "SWZ", "Austria (Bundesliga)": "AUT"
 }
 
+# Mappatura per The Odds API
+ODDS_API_KEYS = {
+    "BRA": "soccer_brazil_campeonato",
+    "ARG": "soccer_argentina_primera_division",
+    "USA": "soccer_usa_mls",
+    "MEX": "soccer_mexico_ligamx",
+    "JPN": "soccer_japan_j_league",
+    "CHN": "soccer_china_superleague",
+    "DNK": "soccer_denmark_superliga",
+    "FIN": "soccer_finland_veikkausliiga",
+    "IRL": "soccer_ireland_premier_division",
+    "NOR": "soccer_norway_eliteserien",
+    "POL": "soccer_poland_ekstraklasa",
+    "ROU": "soccer_romania_liga_1",
+    "RUS": "soccer_russia_premier_league",
+    "SWE": "soccer_sweden_allsvenskan",
+    "SWZ": "soccer_switzerland_superleague",
+    "AUT": "soccer_austria_bundesliga"
+}
+
 API_CODICI = {
     "I1": "SA", "E0": "PL", "SP1": "PD", "D1": "BL1", 
     "F1": "FL1", "N1": "DED", "P1": "PPL", "E1": "ELC", "B1": "JPL", "T1": "TSL"
@@ -260,7 +280,6 @@ def carica_storico(div, n_stagioni, giorno):
     if div in EXTRA_LEAGUES.values():
         d, _ = _leggi_csv(f"https://www.football-data.co.uk/new/{div}.csv")
         if d is None: return None
-        # Mappatura colonne per campionati extra
         col_map = {"Home": "HomeTeam", "Away": "AwayTeam", "HG": "FTHG", "AG": "FTAG"}
         d = d.rename(columns=col_map)
         if "Date" not in d.columns: return None
@@ -294,9 +313,7 @@ def carica_storico(div, n_stagioni, giorno):
 
 @st.cache_data(ttl=3600)
 def carica_fixtures(div):
-    # I campionati extra non hanno un file fixtures separato
     if div in EXTRA_LEAGUES.values(): return None, "Campionato extra: nessun calendario futuro disponibile"
-    
     d, err = _leggi_csv(f"{BASE_URL}/fixtures.csv")
     if d is None: return None, err
     if not {"Div", "HomeTeam", "AwayTeam"}.issubset(d.columns): return None, "colonne attese non trovate"
@@ -313,6 +330,25 @@ def scarica_calendario_api(chiave, codice):
         if res.status_code == 200: return res.json()
     except Exception: pass
     return None
+
+@st.cache_data(ttl=3600)
+def carica_calendario_extra_da_odds(api_key, league_code):
+    if not api_key or league_code not in ODDS_API_KEYS: return pd.DataFrame()
+    sport_key = ODDS_API_KEYS[league_code]
+    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/events?apiKey={api_key}"
+    try:
+        res = requests.get(url, timeout=TIMEOUT)
+        if res.status_code == 200:
+            eventi = res.json()
+            righe = []
+            oggi_data = date.today()
+            for ev in eventi:
+                ts = pd.to_datetime(ev["commence_time"], utc=True).tz_convert("Europe/Rome")
+                if ts.date() >= oggi_data:
+                    righe.append({"Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": ev["home_team"], "Trasferta": ev["away_team"], "Stato": "SCHEDULED", "Giornata": 0})
+            return pd.DataFrame(righe)
+    except Exception: pass
+    return pd.DataFrame()
 
 def assegna_giornate(righe):
     conta = {}
@@ -981,14 +1017,17 @@ if tipo_comp == "Campionati Principali":
     campionato = st.selectbox("Scegli il torneo", list(LEAGUES.keys()), label_visibility="collapsed")
     div = LEAGUES[campionato]
     is_intl = False
+    is_extra = False
 elif tipo_comp == "Campionati Extra":
     campionato = st.selectbox("Scegli il torneo", list(EXTRA_LEAGUES.keys()), label_visibility="collapsed")
     div = EXTRA_LEAGUES[campionato]
     is_intl = False
+    is_extra = True
 else:
     campionato = st.selectbox("Scegli il torneo", list(INTL_COMPS.keys()), label_visibility="collapsed")
     div = campionato
     is_intl = True
+    is_extra = False
 
 giorno = date.today().isoformat()
 
@@ -1010,6 +1049,22 @@ if is_intl:
         mh, ma = mappa.get(h, h), mappa.get(a, a)
         if mh in squadre_modello and ma in squadre_modello:
             quote_fixtures[(mh, ma)] = q
+elif is_extra:
+    df_storico = carica_storico(div, N_STAGIONI, giorno)
+    if df_storico is None or len(df_storico) < 50:
+        st.warning(f"Dati insufficienti per {campionato}. Riprova tra poco.")
+        st.stop()
+    # Calendario Extra da Odds API
+    calendario = carica_calendario_extra_da_odds(chiave_odds, div)
+    quote_fixtures_raw = carica_odds_api(chiave_odds, ODDS_API_KEYS.get(div, ""))
+    squadre_modello = sorted(set(df_storico["HomeTeam"]) | set(df_storico["AwayTeam"]))
+    all_odds_teams = set([k[0] for k in quote_fixtures_raw.keys()] + [k[1] for k in quote_fixtures_raw.keys()])
+    mappa = mappa_nomi(list(all_odds_teams), squadre_modello)
+    quote_fixtures = {}
+    for (h, a), q in quote_fixtures_raw.items():
+        mh, ma = mappa.get(h, h), mappa.get(a, a)
+        if mh in squadre_modello and ma in squadre_modello:
+            quote_fixtures[(mh, ma)] = q
 else:
     df_storico = carica_storico(div, N_STAGIONI, giorno)
     if df_storico is None or len(df_storico) < 100:
@@ -1018,7 +1073,7 @@ else:
     quote_fixtures = {}
 
 # Addestramento Modello
-par = parametri_auto(div, giorno) if not is_intl else {"ridge": 2.0, "halflife": 365}
+par = parametri_auto(div, giorno) if not (is_intl or is_extra) else {"ridge": 2.0, "halflife": 365}
 modello = adatta_modello(df_storico, pd.Timestamp.now().normalize(), par["ridge"], par["halflife"], True)
 
 # Costruzione Calendario
@@ -1037,11 +1092,14 @@ if is_intl:
             calendario = pd.DataFrame(righe)
             if not calendario.empty:
                 calendario["Giornata"] = calendario["Giornata"].astype(int)
+elif is_extra:
+    # Calendario già caricato sopra
+    pass
 else:
     fx, fx_err = carica_fixtures(div)
     calendario, fonte_cal = costruisci_calendario(div, df_storico, fx, chiave_fd, modello["squadre"])
 
-pesi = {"gol": 0.5, "esatto": 0.75} if is_intl else pesi_blend_auto(div, par["ridge"], par["halflife"], giorno)
+pesi = {"gol": 0.5, "esatto": 0.75} if (is_intl or is_extra) else pesi_blend_auto(div, par["ridge"], par["halflife"], giorno)
 M_freq_live = matrice_frequenze(df_storico)
 freq_combo = frequenze_combo(df_storico)
 split_live = tabella_split(df_storico)
@@ -1118,7 +1176,7 @@ _{motivo_g}_
         st.markdown(f"""<div style="text-align: center; padding: 30px 20px; background: rgba(15,23,42,0.6); border-radius: 14px; border: 1px solid #1e293b;"><h2 style="color: {COL_CASA}; margin: 0; font-size: 1.4rem;">{casa}</h2><p style="color: #64748b; margin: 5px 0 20px 0; font-size: 0.85rem;">CASA</p><h3 style="color: {COL_ACCENTO}; margin: 0; font-size: 1.2rem;">VS</h3><h2 style="color: {COL_TRASF}; margin: 20px 0 0 0; font-size: 1.4rem;">{trasf}</h2><p style="color: #64748b; margin: 5px 0 0 0; font-size: 0.85rem;">TRASFERTA</p></div>""", unsafe_allow_html=True)
     with col_st:
         st.markdown("<p style='text-align: center; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px;'>STATISTICHE ATTESE</p>", unsafe_allow_html=True)
-        if is_intl or div in EXTRA_LEAGUES.values():
+        if is_intl or is_extra:
             st.info("Statistiche dettagliate (Tiri, Corner) non disponibili per questa competizione tramite l'API.")
         else:
             righe_st = {"Gol Attesi": (round(lh, 2), round(la, 2))}; righe_st.update(stats_attese(df_storico, casa, trasf))
@@ -1144,7 +1202,7 @@ _{motivo_g}_
 
 with tabs[0]:
     if calendario.empty: 
-        st.info("Nessuna partita futura disponibile.")
+        st.info("Nessuna partita futura disponibile da The Odds API per questo campionato. Usa l'Analisi Manuale in basso.")
     else:
         if "Giornata" not in calendario.columns:
             calendario["Giornata"] = 1
@@ -1174,15 +1232,15 @@ with tabs[0]:
         if att_m and att_m.get("div") == div: 
             mostra_analisi(att_m["casa"], att_m["trasf"], att_m["data"], att_m["ora"])
             
-        # Sezione per l'analisi manuale dei campionati extra
-        st.markdown("---")
-        st.markdown("### 🔮 Analisi Manuale (per campionati senza calendario futuro)")
-        squadre_m = sorted(set(df_storico["HomeTeam"]) | set(df_storico["AwayTeam"]))
-        m1, m2 = st.columns(2)
-        sq_c = m1.selectbox("Casa", squadre_m, key="man_casa")
-        sq_t = m2.selectbox("Trasferta", [s for s in squadre_m if s != sq_c], key="man_trasf")
-        if st.button("📊 Analizza Partita Manuale", key="btn_man"):
-            mostra_analisi(sq_c, sq_t, "Oggi", "")
+    # Sezione per l'analisi manuale dei campionati extra
+    st.markdown("---")
+    st.markdown("### 🔮 Analisi Manuale (per campionati senza calendario futuro)")
+    squadre_m = sorted(set(df_storico["HomeTeam"]) | set(df_storico["AwayTeam"]))
+    m1, m2 = st.columns(2)
+    sq_c = m1.selectbox("Casa", squadre_m, key="man_casa")
+    sq_t = m2.selectbox("Trasferta", [s for s in squadre_m if s != sq_c], key="man_trasf")
+    if st.button("📊 Analizza Partita Manuale", key="btn_man"):
+        mostra_analisi(sq_c, sq_t, "Oggi", "")
 
 with tabs[1]:
     st.subheader("📋 Multipla Builder & Pronostici")
