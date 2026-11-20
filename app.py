@@ -1,14 +1,6 @@
-import difflib
-import io
-import json
-import time
-import math
-import re
-import unicodedata
-import zipfile
+import difflib, io, json, time, math, re, unicodedata, zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
-
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -20,146 +12,57 @@ from scipy.optimize import minimize, minimize_scalar
 from scipy.special import gammaln
 from scipy.stats import binom, nbinom, poisson
 
-# ============================================================
-# CONFIG
-# ============================================================
 st.set_page_config(page_title="Combo Master 5.1", layout="wide", page_icon="⚽")
 
-LEAGUES = {
-    "Serie A (Italia)": "I1", "Premier League (Inghilterra)": "E0",
-    "La Liga (Spagna)": "SP1", "Bundesliga (Germania)": "D1",
-    "Ligue 1 (Francia)": "F1", "Eredivisie (Olanda)": "N1",
-    "Primeira Liga (Portogallo)": "P1", "Championship (Inghilterra)": "E1",
-    "Jupiler Pro League (Belgio)": "B1", "Super Lig (Turchia)": "T1",
-}
+LEAGUES = {"Serie A (Italia)": "I1", "Premier League (Inghilterra)": "E0", "La Liga (Spagna)": "SP1", "Bundesliga (Germania)": "D1", "Ligue 1 (Francia)": "F1", "Eredivisie (Olanda)": "N1", "Primeira Liga (Portogallo)": "P1", "Championship (Inghilterra)": "E1", "Jupiler Pro League (Belgio)": "B1", "Super Lig (Turchia)": "T1"}
 LEAGUES_XG = {"I1", "E0", "SP1", "D1", "F1"}
-
-EXTRA_LEAGUES = {
-    "Brasile (Serie A)": "BRA", "Argentina (Primera)": "ARG",
-    "USA (MLS)": "USA", "Messico (Liga MX)": "MEX",
-    "Giappone (J1)": "JPN", "Cina (Super League)": "CHN",
-    "Danimarca (Superliga)": "DNK", "Finlandia (Veikkausliiga)": "FIN",
-    "Irlanda (Premier Division)": "IRL", "Norvegia (Eliteserien)": "NOR",
-    "Polonia (Ekstraklasa)": "POL", "Romania (Liga I)": "ROU",
-    "Russia (Premier League)": "RUS", "Svezia (Allsvenskan)": "SWE",
-    "Svizzera (Super League)": "SWZ", "Austria (Bundesliga)": "AUT"
-}
-
-ODDS_API_KEYS = {
-    "BRA": "soccer_brazil_campeonato", "ARG": "soccer_argentina_primera_division",
-    "USA": "soccer_usa_mls", "MEX": "soccer_mexico_ligamx",
-    "JPN": "soccer_japan_j_league", "CHN": "soccer_china_superleague",
-    "DNK": "soccer_denmark_superliga", "FIN": "soccer_finland_veikkausliiga",
-    "IRL": "soccer_ireland_premier_division", "NOR": "soccer_norway_eliteserien",
-    "POL": "soccer_poland_ekstraklasa", "ROU": "soccer_romania_liga_1",
-    "RUS": "soccer_russia_premier_league", "SWE": "soccer_sweden_allsvenskan",
-    "SWZ": "soccer_switzerland_superleague", "AUT": "soccer_austria_bundesliga"
-}
-
-API_CODICI = {
-    "I1": "SA", "E0": "PL", "SP1": "PD", "D1": "BL1",
-    "F1": "FL1", "N1": "DED", "P1": "PPL", "E1": "ELC", "B1": "JPL", "T1": "TSL"
-}
-
-INTL_COMPS = {
-    "Champions League": {"fd_id": "CL", "odds_key": "soccer_uefa_champs_league"},
-    "Europei": {"fd_id": "EC", "odds_key": "soccer_uefa_euro"},
-    "Mondiali": {"fd_id": "WC", "odds_key": "soccer_fifa_world_cup"},
-}
-
+EXTRA_LEAGUES = {"Brasile (Serie A)": "BRA", "Argentina (Primera)": "ARG", "USA (MLS)": "USA", "Messico (Liga MX)": "MEX", "Giappone (J1)": "JPN", "Cina (Super League)": "CHN", "Danimarca (Superliga)": "DNK", "Finlandia (Veikkausliiga)": "FIN", "Irlanda (Premier Division)": "IRL", "Norvegia (Eliteserien)": "NOR", "Polonia (Ekstraklasa)": "POL", "Romania (Liga I)": "ROU", "Russia (Premier League)": "RUS", "Svezia (Allsvenskan)": "SWE", "Svizzera (Super League)": "SWZ", "Austria (Bundesliga)": "AUT"}
+ODDS_API_KEYS = {"BRA": "soccer_brazil_campeonato", "ARG": "soccer_argentina_primera_division", "USA": "soccer_usa_mls", "MEX": "soccer_mexico_ligamx", "JPN": "soccer_japan_j_league", "CHN": "soccer_china_superleague", "DNK": "soccer_denmark_superliga", "FIN": "soccer_finland_veikkausliiga", "IRL": "soccer_ireland_premier_division", "NOR": "soccer_norway_eliteserien", "POL": "soccer_poland_ekstraklasa", "ROU": "soccer_romania_liga_1", "RUS": "soccer_russia_premier_league", "SWE": "soccer_sweden_allsvenskan", "SWZ": "soccer_switzerland_superleague", "AUT": "soccer_austria_bundesliga"}
+API_CODICI = {"I1": "SA", "E0": "PL", "SP1": "PD", "D1": "BL1", "F1": "FL1", "N1": "DED", "P1": "PPL", "E1": "ELC", "B1": "JPL", "T1": "TSL"}
+INTL_COMPS = {"Champions League": {"fd_id": "CL", "odds_key": "soccer_uefa_champs_league"}, "Europei": {"fd_id": "EC", "odds_key": "soccer_uefa_euro"}, "Mondiali": {"fd_id": "WC", "odds_key": "soccer_fifa_world_cup"}}
 BASE_URL = "https://football-data.co.uk"
-UA = {"User-Agent": "Mozilla/5.0 (ComboMaster5)"}
+UA = {"User-Agent": "Mozilla/5.0"}
 TIMEOUT = 20
-
-N_STAGIONI = 3
-N_STAGIONI_TEST = 8
-FINESTRA_GIORNI = 1000
-PASSO_TEST = 14
-
-RIDGE_GRID = (0.5, 2.0, 6.0)
-HALFLIFE_GRID = (180, 365, 730, 0)
-W_GRID = (0.0, 0.25, 0.5, 0.75, 1.0)
-
+N_STAGIONI, N_STAGIONI_TEST, FINESTRA_GIORNI, PASSO_TEST = 3, 8, 1000, 14
+RIDGE_GRID, HALFLIFE_GRID, W_GRID = (0.5, 2.0, 6.0), (180, 365, 730, 0), (0.0, 0.25, 0.5, 0.75, 1.0)
 COL_PRESA = [("AvgH", "AvgD", "AvgA"), ("B365H", "B365D", "B365A"), ("PSH", "PSD", "PSA"), ("MaxH", "MaxD", "MaxA")]
 COL_CHIUSURA = [("PSCH", "PSCD", "PSCA"), ("AvgCH", "AvgCD", "AvgCA"), ("B365CH", "B365CD", "B365CA")]
 COL_OU_PRESA = [("Avg>2.5", "Avg<2.5"), ("B365>2.5", "B365<2.5"), ("P>2.5", "P<2.5"), ("Max>2.5", "Max<2.5")]
 COL_OU_CHIUSURA = [("AvgC>2.5", "AvgC<2.5"), ("PC>2.5", "PC<2.5"), ("B365C>2.5", "B365C<2.5")]
-
 STAT_COLONNE = {"Tiri": ("HS", "AS"), "Tiri in Porta": ("HST", "AST"), "Corner": ("HC", "AC"), "Falli": ("HF", "AF"), "Ammonizioni": ("HY", "AY")}
+SOGLIA_FIDUCIA_ALTA, SOGLIA_FIDUCIA_MEDIA, SOGLIA_FAVORITA_NETTA = 0.70, 0.55, 0.55
+SOGLIA_EQUILIBRIO_GAP, SOGLIA_EQUILIBRIO_X, SOGLIA_X_FORZATA = 0.08, 0.25, 0.30
+PROB_MIN_DEFAULT, EDGE_MIN_DEFAULT = 30, 3.0
+COL_PRIMARIO, COL_ACCENTO, COL_CASA, COL_TRASF = "#38bdf8", "#a855f7", "#38bdf8", "#f43f5e"
 
-SOGLIA_FIDUCIA_ALTA = 0.70
-SOGLIA_FIDUCIA_MEDIA = 0.55
-SOGLIA_FAVORITA_NETTA = 0.55
-SOGLIA_EQUILIBRIO_GAP = 0.08
-SOGLIA_EQUILIBRIO_X = 0.25
-SOGLIA_X_FORZATA = 0.30
-PROB_MIN_DEFAULT = 30
-EDGE_MIN_DEFAULT = 3.0
-
-COL_PRIMARIO = "#38bdf8"
-COL_ACCENTO = "#a855f7"
-COL_CASA = "#38bdf8"
-COL_TRASF = "#f43f5e"
-
-# ============================================================
-# CSS & HEADER
-# ============================================================
-st.markdown(f"""
-<style>
+st.markdown(f"""<style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
 #MainMenu, footer, header {{ visibility: hidden; }}
 .stApp {{ background-color: #0b0f19; color: #f3f4f6; }}
 .block-container {{ padding-top: 1.5rem; padding-bottom: 3rem; max-width: 1250px; }}
 [data-testid="stSidebar"] {{ background-color: #111827; border-right: 1px solid #1f2937; }}
-.stButton>button {{
-    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-    color: white; border: none; border-radius: 10px; font-weight: 600;
-    padding: 0.5rem 1rem; transition: all 0.2s;
-}}
+.stButton>button {{ background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; border: none; border-radius: 10px; font-weight: 600; padding: 0.5rem 1rem; transition: all 0.2s; }}
 .stButton>button:hover {{ transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59,130,246,.4); }}
-[data-testid="stMetric"] {{
-    background-color: #111827; border: 1px solid #1f2937;
-    padding: 15px; border-radius: 12px;
-}}
+[data-testid="stMetric"] {{ background-color: #111827; border: 1px solid #1f2937; padding: 15px; border-radius: 12px; }}
 [data-testid="stMetricValue"] {{ color: {COL_PRIMARIO} !important; font-weight: 700 !important; }}
 div[data-testid="stExpander"] {{ border: 1px solid #1f2937; border-radius: 12px; }}
 .tooltip {{ position: relative; display: inline-block; cursor: help; color: #64748b; font-size: 0.8rem; margin-left: 4px; }}
 .tooltip .tooltiptext {{ visibility: hidden; width: 220px; background-color: #1e293b; color: #f8fafc; text-align: center; border-radius: 6px; padding: 8px; position: absolute; z-index: 1; bottom: 125%; left: 50%; margin-left: -110px; opacity: 0; transition: opacity 0.3s; font-size: 0.75rem; font-weight: normal; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #334155; }}
 .tooltip:hover .tooltiptext {{ visibility: visible; opacity: 1; }}
-@media (max-width: 768px) {{
-    .block-container {{ padding-top: 1rem; padding-left: 0.5rem; padding-right: 0.5rem; }}
-    h1 {{ font-size: 1.5rem !important; }}
-    h3 {{ font-size: 1.1rem !important; }}
-    [data-testid="stMetricValue"] {{ font-size: 1.2rem !important; }}
-    .stButton>button {{ width: 100%; }}
-    .stDataFrame {{ font-size: 0.8rem; }}
-    .tooltip .tooltiptext {{ width: 160px; margin-left: -80px; }}
-}}
-</style>
-""", unsafe_allow_html=True)
+@media (max-width: 768px) {{ .block-container {{ padding-top: 1rem; padding-left: 0.5rem; padding-right: 0.5rem; }} h1 {{ font-size: 1.5rem !important; }} h3 {{ font-size: 1.1rem !important; }} [data-testid="stMetricValue"] {{ font-size: 1.2rem !important; }} .stButton>button {{ width: 100%; }} .stDataFrame {{ font-size: 0.8rem; }} .tooltip .tooltiptext {{ width: 160px; margin-left: -80px; }} }}
+</style>""", unsafe_allow_html=True)
 
-def tooltip_testo(testo):
-    return f'<span class="tooltip">❓<span class="tooltiptext">{testo}</span></span>'
+def tooltip_testo(testo): return f'<span class="tooltip">❓<span class="tooltiptext">{testo}</span></span>'
+st.markdown(f"""<div style="background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%); padding: 25px; border-radius: 20px; border: 1px solid #312e81; text-align: center; margin-bottom: 20px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.4);"><h1 style="color: #f8fafc; font-weight: 800; font-size: 2rem; margin: 0;">⚽ COMBO MASTER 5.1</h1><p style="color: #94a3b8; font-size: 0.95rem; margin-top: 8px;">Dixon-Coles + xG · Top Picks multi-campionato · tempi completi</p></div>""", unsafe_allow_html=True)
 
-st.markdown(f"""
-<div style="background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%); padding: 25px; border-radius: 20px; border: 1px solid #312e81; text-align: center; margin-bottom: 20px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.4);">
-    <h1 style="color: #f8fafc; font-weight: 800; font-size: 2rem; margin: 0;">⚽ COMBO MASTER 5.1</h1>
-    <p style="color: #94a3b8; font-size: 0.95rem; margin-top: 8px;">Dixon-Coles + xG · Top Picks multi-campionato · tempi completi (1X2, O/U, HT/FT, esatti)</p>
-</div>
-""", unsafe_allow_html=True)
-
-# ============================================================
-# UTILITY
-# ============================================================
 _STOP_NOMI = {"fc", "ac", "as", "cf", "afc", "acf", "ssc", "us", "ud", "rc", "rcd", "sv", "vfl", "vfb", "fsv", "tsg", "fk", "cd", "ca", "sc", "bv", "de", "calcio", "ogc", "sco"}
 _ALIAS_NOMI = {"inter": "internazionale milano", "verona": "hellas verona", "man united": "manchester united", "man city": "manchester city", "nott m forest": "nottingham forest", "wolves": "wolverhampton wanderers", "ath madrid": "club atletico madrid", "ath bilbao": "athletic club", "espanol": "espanyol barcelona", "bayern munich": "bayern munchen", "m gladbach": "borussia monchengladbach", "ein frankfurt": "eintracht frankfurt", "paris sg": "paris saint germain", "lyon": "olympique lyonnais", "rennes": "stade rennais", "brest": "stade brestois", "for sittard": "fortuna sittard", "manchester city fc": "manchester city", "manchester united fc": "manchester united", "arsenal fc": "arsenal", "chelsea fc": "chelsea", "liverpool fc": "liverpool", "tottenham hotspur fc": "tottenham"}
 
-def _norm_sq(nome):
-    n = unicodedata.normalize("NFKD", str(nome or "")).encode("ascii", "ignore").decode().lower()
+def _norm_sq(n):
+    n = unicodedata.normalize("NFKD", str(n or "")).encode("ascii", "ignore").decode().lower()
     n = re.sub(r"[^a-z0-9 ]", " ", n)
-    n = " ".join(t for t in n.split() if t not in _STOP_NOMI and not t.isdigit())
-    return _ALIAS_NOMI.get(n, n)
+    return _ALIAS_NOMI.get(" ".join(t for t in n.split() if t not in _STOP_NOMI and not t.isdigit()), n)
 
 def _similarita(a, b):
     if not a or not b: return 0.0
@@ -176,8 +79,7 @@ def mappa_nomi(nomi_api, nomi_target):
         best, best_s = None, 0.0
         for t, nt in norm_t.items():
             s_ = _similarita(na, nt)
-            if s_ > best_s:
-                best, best_s = t, s_
+            if s_ > best_s: best, best_s = t, s_
         out[n] = best if best is not None and best_s >= 0.75 else n
     return out
 
@@ -185,7 +87,7 @@ def prima_tripla(riga, colonne):
     for cols in colonne:
         try:
             v = [float(riga[c]) for c in cols]
-        except (KeyError, TypeError, ValueError): continue
+        except: continue
         if all(np.isfinite(v)) and all(x > 1.0 for x in v): return v
     return None
 
@@ -193,18 +95,14 @@ def prima_coppia(riga, colonne):
     for a, b in colonne:
         try:
             v = [float(riga[a]), float(riga[b])]
-        except (KeyError, TypeError, ValueError): continue
+        except: continue
         if all(np.isfinite(v)) and all(x > 1.0 for x in v): return v
     return None
 
 def _leggi_csv(url):
-    ultimo = "errore sconosciuto"
-    for tentativo in range(3):
+    for t in range(3):
         try:
             res = requests.get(url, timeout=TIMEOUT, headers=UA)
-        except Exception as e:
-            ultimo = f"connessione fallita ({type(e).__name__})"
-        else:
             if res.status_code == 200:
                 for enc in ("utf-8-sig", "latin-1"):
                     try:
@@ -212,18 +110,13 @@ def _leggi_csv(url):
                         d.columns = [str(c).strip().lstrip("\ufeff") for c in d.columns]
                         return d, None
                     except UnicodeDecodeError: continue
-                    except Exception as e: return None, f"file non leggibile ({type(e).__name__})"
-                return None, "codifica non riconosciuta"
-            ultimo = f"risposta HTTP {res.status_code}"
-            if res.status_code < 500 and res.status_code != 429: return None, ultimo
-        if tentativo < 2: time.sleep(2 + 3 * tentativo)
-    return None, ultimo
+                    except Exception as e: return None, str(e)
+            if res.status_code < 500 and res.status_code != 429: return None, str(res.status_code)
+        except Exception as e: pass
+        time.sleep(2)
+    return None, "Errore"
 
-# ============================================================
-# DEVIG
-# ============================================================
 METODO_MARGINE = {"m": "proporzionale"}
-
 def _devig_potenza(pi):
     lo, hi = 1.0, 10.0
     for _ in range(60):
@@ -235,8 +128,7 @@ def _devig_potenza(pi):
 
 def _devig_shin(pi):
     B = pi.sum()
-    def somma(z):
-        return ((np.sqrt(z * z + 4 * (1 - z) * pi * pi / B) - z) / (2 * (1 - z))).sum()
+    def somma(z): return ((np.sqrt(z*z + 4*(1-z)*pi*pi/B) - z) / (2*(1-z))).sum()
     if somma(0.0) <= 1: return pi / B
     lo, hi = 0.0, 0.5
     for _ in range(60):
@@ -244,7 +136,7 @@ def _devig_shin(pi):
         if somma(mid) > 1: lo = mid
         else: hi = mid
     z = (lo + hi) / 2
-    p = (np.sqrt(z * z + 4 * (1 - z) * pi * pi / B) - z) / (2 * (1 - z))
+    p = (np.sqrt(z*z + 4*(1-z)*pi*pi/B) - z) / (2*(1-z))
     return p / p.sum()
 
 def senza_margine(quote, metodo=None):
@@ -259,54 +151,41 @@ def _diff_se(a, b):
     se = d.std(ddof=1) / math.sqrt(len(d)) if len(d) > 1 else float("nan")
     return f"{d.mean():+.4f} ± {se:.4f}"
 
-# ============================================================
-# DATA LAYER
-# ============================================================
-@st.cache_data(ttl=6 * 3600)
-def carica_storico(div, n_stagioni, giorno):
+@st.cache_data(ttl=6*3600)
+def carica_storico(div, n, giorno):
     if div in EXTRA_LEAGUES.values():
         d, _ = _leggi_csv(f"https://www.football-data.co.uk/new/{div}.csv")
         if d is None: return None
-        col_map = {"Home": "HomeTeam", "Away": "AwayTeam", "HG": "FTHG", "AG": "FTAG"}
-        d = d.rename(columns=col_map)
-        if "Date" not in d.columns: return None
+        d = d.rename(columns={"Home": "HomeTeam", "Away": "AwayTeam", "HG": "FTHG", "AG": "FTAG"})
         d["Date"] = pd.to_datetime(d["Date"], dayfirst=True, errors="coerce", format="mixed")
         d = d.dropna(subset=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]).copy()
-        d["FTHG"] = d["FTHG"].astype(int)
-        d["FTAG"] = d["FTAG"].astype(int)
+        d["FTHG"], d["FTAG"] = d["FTHG"].astype(int), d["FTAG"].astype(int)
         d["Stag"] = d["Date"].dt.year
-        stagioni = sorted(d["Stag"].unique())[-n_stagioni:]
-        d = d[d["Stag"].isin(stagioni)].copy()
+        d = d[d["Stag"].isin(sorted(d["Stag"].unique())[-n:])]
         return d.sort_values("Date").reset_index(drop=True)
     else:
-        oggi = date.today()
-        anno = oggi.year if oggi.month >= 7 else oggi.year - 1
+        oggi = date.today(); anno = oggi.year if oggi.month >= 7 else oggi.year - 1
         frames = []
-        for k in range(n_stagioni):
-            y = anno - k
-            codice = f"{y % 100:02d}{(y + 1) % 100:02d}"
+        for k in range(n):
+            y = anno - k; codice = f"{y%100:02d}{(y+1)%100:02d}"
             d, _ = _leggi_csv(f"{BASE_URL}/mmz4281/{codice}/{div}.csv")
-            if d is None or not {"Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"}.issubset(d.columns): continue
-            d["Stag"] = y
-            frames.append(d)
+            if d is not None and {"Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"}.issubset(d.columns):
+                d["Stag"] = y; frames.append(d)
         if not frames: return None
         df = pd.concat(frames, ignore_index=True)
         df = df.dropna(subset=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]).copy()
         df["Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce", format="mixed")
         df = df.dropna(subset=["Date"])
-        df["FTHG"] = df["FTHG"].astype(int)
-        df["FTAG"] = df["FTAG"].astype(int)
+        df["FTHG"], df["FTAG"] = df["FTHG"].astype(int), df["FTAG"].astype(int)
         return df.sort_values("Date").reset_index(drop=True)
 
 @st.cache_data(ttl=3600)
 def carica_fixtures(div):
-    if div in EXTRA_LEAGUES.values(): return None, "Campionato extra: nessun calendario futuro disponibile"
+    if div in EXTRA_LEAGUES.values(): return None, "Extra"
     d, err = _leggi_csv(f"{BASE_URL}/fixtures.csv")
-    if d is None: return None, err
-    if not {"Div", "HomeTeam", "AwayTeam"}.issubset(d.columns): return None, "colonne attese non trovate"
+    if d is None or not {"Div", "HomeTeam", "AwayTeam"}.issubset(d.columns): return None, err
     d = d[d["Div"] == div].dropna(subset=["HomeTeam", "AwayTeam"]).copy()
-    if "Date" in d.columns:
-        d["Date"] = pd.to_datetime(d["Date"], dayfirst=True, errors="coerce", format="mixed")
+    if "Date" in d.columns: d["Date"] = pd.to_datetime(d["Date"], dayfirst=True, errors="coerce", format="mixed")
     return d.reset_index(drop=True), None
 
 @st.cache_data(ttl=3600)
@@ -315,255 +194,190 @@ def scarica_calendario_api(chiave, codice):
     try:
         res = requests.get(f"https://api.football-data.org/v4/competitions/{codice}/matches", headers={"X-Auth-Token": chiave}, timeout=TIMEOUT)
         if res.status_code == 200: return res.json()
-    except Exception: pass
+    except: pass
     return None
 
 @st.cache_data(ttl=3600)
 def carica_calendario_extra_da_odds(api_key, league_code):
     if not api_key or league_code not in ODDS_API_KEYS: return pd.DataFrame()
     sport_key = ODDS_API_KEYS[league_code]
-    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/events?apiKey={api_key}"
     try:
-        res = requests.get(url, timeout=TIMEOUT)
+        res = requests.get(f"https://api.the-odds-api.com/v4/sports/{sport_key}/events?apiKey={api_key}", timeout=TIMEOUT)
         if res.status_code == 200:
-            eventi = res.json()
             righe = []
-            oggi_data = date.today()
-            for ev in eventi:
+            oggi = date.today()
+            for ev in res.json():
                 ts = pd.to_datetime(ev["commence_time"], utc=True).tz_convert("Europe/Rome")
-                if ts.date() >= oggi_data:
-                    righe.append({"Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": ev["home_team"], "Trasferta": ev["away_team"], "Stato": "SCHEDULED", "Giornata": 0})
+                if ts.date() >= oggi: righe.append({"Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": ev["home_team"], "Trasferta": ev["away_team"], "Stato": "SCHEDULED", "Giornata": 0})
             return pd.DataFrame(righe)
-    except Exception: pass
+    except: pass
     return pd.DataFrame()
 
 def assegna_giornate(righe):
     conta = {}
     for r in righe:
         g = max(conta.get(r["Casa"], 0), conta.get(r["Trasferta"], 0)) + 1
-        r["Giornata"] = g
-        conta[r["Casa"]] = conta.get(r["Casa"], 0) + 1
-        conta[r["Trasferta"]] = conta.get(r["Trasferta"], 0) + 1
+        r["Giornata"] = g; conta[r["Casa"]] = conta.get(r["Casa"], 0) + 1; conta[r["Trasferta"]] = conta.get(r["Trasferta"], 0) + 1
     return righe
 
 def costruisci_calendario(div, df_storico, fx, chiave, squadre_modello):
     dati = scarica_calendario_api(chiave, API_CODICI[div]) if chiave and div in API_CODICI else None
     if dati and dati.get("matches"):
         nomi = {m["homeTeam"]["name"] for m in dati["matches"]} | {m["awayTeam"]["name"] for m in dati["matches"]}
-        nomi = {n for n in nomi if n}
-        mp = mappa_nomi(nomi, squadre_modello)
+        mp = mappa_nomi(list({n for n in nomi if n}), squadre_modello)
         righe = []
         for m in dati["matches"]:
             h, a = m["homeTeam"].get("name"), m["awayTeam"].get("name")
-            if not h or not a: continue
-            ft = (m.get("score") or {}).get("fullTime") or {}
-            ts = pd.to_datetime(m["utcDate"], utc=True).tz_convert("Europe/Rome")
-            righe.append({"Giornata": m.get("matchday") or 0, "Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": mp.get(h, h), "Trasferta": mp.get(a, a), "GolC": ft.get("home"), "GolT": ft.get("away"), "Stato": m.get("status", "")})
-        return pd.DataFrame(righe), "football-data.org (calendario completo)"
-
+            if h and a:
+                ft = (m.get("score") or {}).get("fullTime") or {}
+                ts = pd.to_datetime(m["utcDate"], utc=True).tz_convert("Europe/Rome")
+                righe.append({"Giornata": m.get("matchday") or 0, "Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": mp.get(h, h), "Trasferta": mp.get(a, a), "GolC": ft.get("home"), "GolT": ft.get("away"), "Stato": m.get("status", "")})
+        return pd.DataFrame(righe), "API"
     righe = []
     stag = df_storico[df_storico["Stag"] == df_storico["Stag"].max()]
     for _, r in stag.iterrows():
-        righe.append({"Data": r["Date"].strftime("%Y-%m-%d"), "Ora": str(r.get("Time", ""))[:5] if pd.notna(r.get("Time")) else "", "Casa": r["HomeTeam"], "Trasferta": r["AwayTeam"], "GolC": int(r["FTHG"]), "GolT": int(r["FTAG"]), "Stato": "FINISHED", "_d": r["Date"]})
+        righe.append({"Data": r["Date"].strftime("%Y-%m-%d"), "Ora": str(r.get("Time", ""))[:5], "Casa": r["HomeTeam"], "Trasferta": r["AwayTeam"], "GolC": int(r["FTHG"]), "GolT": int(r["FTAG"]), "Stato": "FINISHED", "_d": r["Date"]})
     giocate = {(r["Data"], r["Casa"], r["Trasferta"]) for r in righe}
     if fx is not None:
         for _, r in fx.iterrows():
             d = r["Date"] if "Date" in r and pd.notna(r["Date"]) else pd.Timestamp.max
             key = (d.strftime("%Y-%m-%d") if d != pd.Timestamp.max else "", r["HomeTeam"], r["AwayTeam"])
-            if key in giocate: continue
-            righe.append({"Data": d.strftime("%Y-%m-%d") if d != pd.Timestamp.max else "", "Ora": str(r["Time"])[:5] if "Time" in r and pd.notna(r.get("Time")) else "", "Casa": r["HomeTeam"], "Trasferta": r["AwayTeam"], "GolC": None, "GolT": None, "Stato": "SCHEDULED", "_d": d})
+            if key not in giocate:
+                righe.append({"Data": d.strftime("%Y-%m-%d") if d != pd.Timestamp.max else "", "Ora": str(r.get("Time", ""))[:5], "Casa": r["HomeTeam"], "Trasferta": r["AwayTeam"], "GolC": None, "GolT": None, "Stato": "SCHEDULED", "_d": d})
     righe.sort(key=lambda r: r["_d"])
-    righe = assegna_giornate(righe)
-    return pd.DataFrame(righe).drop(columns="_d"), "football-data.co.uk (giocate + prossimo turno)"
+    return pd.DataFrame(assegna_giornate(righe)).drop(columns="_d"), "CSV"
 
 @st.cache_data(ttl=3600)
-def carica_storico_intl(chiave, fd_id, n_stagioni, giorno):
+def carica_storico_intl(chiave, fd_id, n, giorno):
     if not chiave: return None
-    oggi = date.today()
-    anno = oggi.year if oggi.month >= 7 else oggi.year - 1
+    oggi = date.today(); anno = oggi.year if oggi.month >= 7 else oggi.year - 1
     frames = []
-    for k in range(n_stagioni):
+    for k in range(n):
         y = anno - k
-        url = f"https://api.football-data.org/v4/competitions/{fd_id}/matches?season={y}&status=FINISHED"
         try:
-            res = requests.get(url, headers={"X-Auth-Token": chiave}, timeout=TIMEOUT)
+            res = requests.get(f"https://api.football-data.org/v4/competitions/{fd_id}/matches?season={y}&status=FINISHED", headers={"X-Auth-Token": chiave}, timeout=TIMEOUT)
             if res.status_code == 200:
-                matches = res.json().get("matches", [])
                 righe = []
-                for m in matches:
+                for m in res.json().get("matches", []):
                     ft = (m.get("score") or {}).get("fullTime") or {}
                     if ft.get("home") is not None and ft.get("away") is not None:
                         righe.append({"Date": pd.to_datetime(m["utcDate"]).tz_localize(None), "HomeTeam": m["homeTeam"]["name"], "AwayTeam": m["awayTeam"]["name"], "FTHG": ft["home"], "FTAG": ft["away"], "Stag": y})
                 if righe: frames.append(pd.DataFrame(righe))
-        except Exception: pass
+        except: pass
         time.sleep(6)
     if not frames: return None
-    df = pd.concat(frames, ignore_index=True)
-    return df.sort_values("Date").reset_index(drop=True)
+    return pd.concat(frames, ignore_index=True).sort_values("Date").reset_index(drop=True)
 
 @st.cache_data(ttl=3600)
 def carica_odds_api(api_key, sport_key):
     if not api_key: return {}
-    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={api_key}&regions=eu&markets=h2h&oddsFormat=decimal"
     try:
-        res = requests.get(url, timeout=TIMEOUT)
+        res = requests.get(f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={api_key}&regions=eu&markets=h2h&oddsFormat=decimal", timeout=TIMEOUT)
         if res.status_code == 200:
-            dati = res.json()
             quotes = {}
-            for match in dati:
-                home, away = match["home_team"], match["away_team"]
+            for match in res.json():
                 h_odds, d_odds, a_odds = [], [], []
                 for bm in match.get("bookmakers", []):
                     for mkt in bm.get("markets", []):
                         if mkt["key"] == "h2h":
                             for out in mkt["outcomes"]:
-                                if out["name"] == home: h_odds.append(out["price"])
-                                elif out["name"] == away: a_odds.append(out["price"])
+                                if out["name"] == match["home_team"]: h_odds.append(out["price"])
+                                elif out["name"] == match["away_team"]: a_odds.append(out["price"])
                                 elif out["name"] == "Draw": d_odds.append(out["price"])
-                if h_odds and d_odds and a_odds:
-                    quotes[(home, away)] = [np.mean(h_odds), np.mean(d_odds), np.mean(a_odds)]
+                if h_odds and d_odds and a_odds: quotes[(match["home_team"], match["away_team"])] = [np.mean(h_odds), np.mean(d_odds), np.mean(a_odds)]
             return quotes
-    except Exception: pass
+    except: pass
     return {}
 
-# ============================================================
-# xG DA UNDERSTAT
-# ============================================================
 def _estrai_var_understat(html, var_name):
-    pattern = var_name + r"\s*=\s*JSON\.parse\('([^']+)'\)"
-    match = re.search(pattern, html)
-    if not match:
-        return None
-    try:
-        decoded = bytes(match.group(1), "utf-8").decode("unicode_escape")
-        decoded = decoded.encode("latin-1").decode("utf-8")
-        return json.loads(decoded)
-    except Exception:
-        return None
+    match = re.search(var_name + r"\s*=\s*JSON\.parse\('([^']+)'\)", html)
+    if match:
+        try:
+            decoded = bytes(match.group(1), "utf-8").decode("unicode_escape")
+            return json.loads(decoded.encode("latin-1").decode("utf-8"))
+        except: pass
+    return None
 
-@st.cache_data(ttl=12 * 3600)
+@st.cache_data(ttl=12*3600)
 def carica_xg_understat(div, stagione):
     league_map = {"I1": "Serie_A", "E0": "EPL", "SP1": "La_liga", "D1": "Bundesliga", "F1": "Ligue_1"}
     if div not in league_map: return None
-    league = league_map[div]
-    url = f"https://understat.com/league/{league}/{stagione}"
     try:
-        res = requests.get(url, timeout=TIMEOUT, headers=UA)
+        res = requests.get(f"https://understat.com/league/{league_map[div]}/{stagione}", timeout=TIMEOUT, headers=UA)
         if res.status_code != 200: return None
-        soup = BeautifulSoup(res.text, "html.parser")
-        html = str(soup)
+        html = str(BeautifulSoup(res.text, "html.parser"))
         dates_data = _estrai_var_understat(html, "datesData")
         if not dates_data: return None
         righe = []
-        for match in dates_data:
-            if not match.get("isResult"): continue
-            righe.append({
-                "Date": pd.to_datetime(match["datetime"]).tz_localize(None),
-                "HomeTeam": match["h"]["title"],
-                "AwayTeam": match["a"]["title"],
-                "FTHG": int(match["goals"]["h"]),
-                "FTAG": int(match["goals"]["a"]),
-                "xGH": float(match["xG"]["h"]),
-                "xGA": float(match["xG"]["a"]),
-                "Stag": stagione
-            })
+        for m in dates_data:
+            if m.get("isResult"):
+                righe.append({"Date": pd.to_datetime(m["datetime"]).tz_localize(None), "HomeTeam": m["h"]["title"], "AwayTeam": m["a"]["title"], "FTHG": int(m["goals"]["h"]), "FTAG": int(m["goals"]["a"]), "xGH": float(m["xG"]["h"]), "xGA": float(m["xG"]["a"]), "Stag": stagione})
         return pd.DataFrame(righe)
-    except Exception:
-        return None
+    except: return None
 
-@st.cache_data(ttl=12 * 3600)
+@st.cache_data(ttl=12*3600)
 def carica_xg_storico(div, giorno):
-    oggi = date.today()
-    anno_corr = oggi.year if oggi.month >= 7 else oggi.year - 1
-    frames = []
-    for k in range(3):
-        stagione = anno_corr - k
-        d = carica_xg_understat(div, stagione)
-        if d is not None and not d.empty:
-            frames.append(d)
-    if not frames: return None
-    return pd.concat(frames, ignore_index=True).sort_values("Date").reset_index(drop=True)
+    oggi = date.today(); anno = oggi.year if oggi.month >= 7 else oggi.year - 1
+    frames = [carica_xg_understat(div, anno - k) for k in range(3)]
+    frames = [f for f in frames if f is not None and not f.empty]
+    return pd.concat(frames, ignore_index=True).sort_values("Date").reset_index(drop=True) if frames else None
 
-def combina_modelli(M_classico, M_xg, peso_xg=0.5):
-    return (1 - peso_xg) * M_classico + peso_xg * M_xg
+def combina_modelli(M1, M2, peso=0.5): return (1 - peso) * M1 + peso * M2
 
-# ============================================================
-# MODELLO DIXON-COLES
-# ============================================================
-_K = np.arange(11)
-_LOGFACT = gammaln(_K + 1)
-_I, _J = np.meshgrid(_K, _K, indexing="ij")
-_TOT = _I + _J
+_K = np.arange(11); _LOGFACT = gammaln(_K + 1); _I, _J = np.meshgrid(_K, _K, indexing="ij"); _TOT = _I + _J
 _MASK = {"p1": _I > _J, "px": _I == _J, "p2": _I < _J, "over1.5": _TOT > 1.5, "over2.5": _TOT > 2.5, "over3.5": _TOT > 3.5, "btts": (_I > 0) & (_J > 0)}
 
-def adatta_modello(df, data_rif, ridge, halflife, usa_dc=True, elo_diff=None):
+def adatta_modello(df, data_rif, ridge, halflife, usa_dc=True):
     squadre = sorted(set(df["HomeTeam"]) | set(df["AwayTeam"]))
-    n = len(squadre)
-    idx = {t: i for i, t in enumerate(squadre)}
-    hi = df["HomeTeam"].map(idx).to_numpy()
-    ai = df["AwayTeam"].map(idx).to_numpy()
-    x = df["FTHG"].to_numpy(float)
-    y = df["FTAG"].to_numpy(float)
+    n = len(squadre); idx = {t: i for i, t in enumerate(squadre)}
+    hi, ai = df["HomeTeam"].map(idx).to_numpy(), df["AwayTeam"].map(idx).to_numpy()
+    x, y = df["FTHG"].to_numpy(float), df["FTAG"].to_numpy(float)
     eta_gg = (data_rif - df["Date"]).dt.days.clip(lower=0).to_numpy(float)
     w = np.exp(-np.log(2) * eta_gg / halflife) if halflife and halflife > 0 else np.ones(len(df))
-    use_elo = elo_diff is not None
-    de = np.asarray(elo_diff, float) if use_elo else np.zeros(len(df))
 
     def f(th):
-        mu, hm = th[0], th[1]
-        att, dfn = th[2:2 + n], th[2 + n:2 + 2 * n]
-        beta = th[2 + 2 * n] if use_elo else 0.0
-        eh = mu + hm + att[hi] + dfn[ai] + beta * de
-        ea = mu + att[ai] + dfn[hi] - beta * de
+        mu, hm, att, dfn = th[0], th[1], th[2:2+n], th[2+n:2+2*n]
+        eh, ea = mu + hm + att[hi] + dfn[ai], mu + att[ai] + dfn[hi]
         lh, la = np.exp(eh), np.exp(ea)
-        nll = -np.sum(w * (x * eh - lh + y * ea - la)) + ridge * (att @ att + dfn @ dfn)
-        rh, ra = w * (x - lh), w * (y - la)
+        nll = -np.sum(w * (x*eh - lh + y*ea - la)) + ridge * (att@att + dfn@dfn)
+        rh, ra = w*(x-lh), w*(y-la)
         g = np.zeros_like(th)
-        g[0] = -(rh.sum() + ra.sum())
-        g[1] = -rh.sum()
-        g[2:2 + n] = -(np.bincount(hi, rh, n) + np.bincount(ai, ra, n)) + 2 * ridge * att
-        g[2 + n:2 + 2 * n] = -(np.bincount(ai, rh, n) + np.bincount(hi, ra, n)) + 2 * ridge * dfn
-        if use_elo: g[2 + 2 * n] = -np.sum(de * (rh - ra))
+        g[0], g[1] = -(rh.sum() + ra.sum()), -rh.sum()
+        g[2:2+n] = -(np.bincount(hi, rh, n) + np.bincount(ai, ra, n)) + 2*ridge*att
+        g[2+n:2+2*n] = -(np.bincount(ai, rh, n) + np.bincount(hi, ra, n)) + 2*ridge*dfn
         return nll, g
 
-    th0 = np.zeros(2 + 2 * n + (1 if use_elo else 0))
-    th0[0] = np.log(max((x.mean() + y.mean()) / 2, 0.3))
+    th0 = np.zeros(2+2*n); th0[0] = np.log(max((x.mean()+y.mean())/2, 0.3))
     th = minimize(f, th0, jac=True, method="L-BFGS-B").x
-    mu, hm, att, dfn = th[0], th[1], th[2:2 + n], th[2 + n:2 + 2 * n]
-    beta = float(th[2 + 2 * n]) if use_elo else 0.0
+    mu, hm, att, dfn = th[0], th[1], th[2:2+n], th[2+n:2+2*n]
 
     rho = 0.0
     if usa_dc:
-        lh = np.exp(mu + hm + att[hi] + dfn[ai] + beta * de)
-        la = np.exp(mu + att[ai] + dfn[hi] - beta * de)
-        m00, m01, m10, m11 = (x == 0) & (y == 0), (x == 0) & (y == 1), (x == 1) & (y == 0), (x == 1) & (y == 1)
+        lh, la = np.exp(mu+hm+att[hi]+dfn[ai]), np.exp(mu+att[ai]+dfn[hi])
+        m00, m01, m10, m11 = (x==0)&(y==0), (x==0)&(y==1), (x==1)&(y==0), (x==1)&(y==1)
         def neg(r):
             t = np.ones(len(x))
-            t[m00] = np.maximum(1 - lh[m00] * la[m00] * r, 1e-6)
-            t[m01] = np.maximum(1 + lh[m01] * r, 1e-6)
-            t[m10] = np.maximum(1 + la[m10] * r, 1e-6)
+            t[m00] = np.maximum(1 - lh[m00]*la[m00]*r, 1e-6)
+            t[m01] = np.maximum(1 + lh[m01]*r, 1e-6)
+            t[m10] = np.maximum(1 + la[m10]*r, 1e-6)
             t[m11] = np.maximum(1 - r, 1e-6)
             return -np.sum(w * np.log(t))
         rho = float(minimize_scalar(neg, bounds=(-0.3, 0.3), method="bounded").x)
+    return {"squadre": squadre, "idx": idx, "mu": float(mu), "hm": float(hm), "att": att, "dfn": dfn, "rho": rho}
 
-    return {"squadre": squadre, "idx": idx, "mu": float(mu), "hm": float(hm), "att": att, "dfn": dfn, "rho": rho, "beta": beta}
-
-def lambda_partita(m, casa, trasf, d_elo=0.0):
-    ic, it = m["idx"].get(casa), m["idx"].get(trasf)
+def lambda_partita(m, c, t):
+    ic, it = m["idx"].get(c), m["idx"].get(t)
     ac, dc = (m["att"][ic], m["dfn"][ic]) if ic is not None else (0.0, 0.0)
     at, dt = (m["att"][it], m["dfn"][it]) if it is not None else (0.0, 0.0)
-    b = m.get("beta", 0.0) * d_elo
-    return math.exp(m["mu"] + m["hm"] + ac + dt + b), math.exp(m["mu"] + at + dc - b)
+    return math.exp(m["mu"]+m["hm"]+ac+dt), math.exp(m["mu"]+at+dc)
 
 def _pmf(lam): return np.exp(-lam + _K * np.log(np.maximum(lam, 1e-9)) - _LOGFACT)
 
 def matrice_punteggi(lh, la, rho):
     M = np.outer(_pmf(lh), _pmf(la))
     if rho != 0:
-        M[0, 0] *= max(1 - lh * la * rho, 1e-6)
-        M[0, 1] *= max(1 + lh * rho, 1e-6)
-        M[1, 0] *= max(1 + la * rho, 1e-6)
-        M[1, 1] *= max(1 - rho, 1e-6)
+        M[0, 0] *= max(1 - lh*la*rho, 1e-6); M[0, 1] *= max(1 + lh*rho, 1e-6)
+        M[1, 0] *= max(1 + la*rho, 1e-6); M[1, 1] *= max(1 - rho, 1e-6)
     return M / M.sum()
 
 def mercati(M):
@@ -571,890 +385,387 @@ def mercati(M):
     for s in (1.5, 2.5, 3.5): d[f"over{s}"] = float(M[_TOT > s].sum())
     return d
 
-def gol_attesi(M): return float((M.sum(axis=1) * _K).sum()), float((M.sum(axis=0) * _K).sum())
+def gol_attesi(M): return float((M.sum(axis=1)*_K).sum()), float((M.sum(axis=0)*_K).sum())
 
 def matrice_frequenze(df):
     cm = np.zeros((11, 11))
     np.add.at(cm, (np.minimum(df["FTHG"].to_numpy(), 10), np.minimum(df["FTAG"].to_numpy(), 10)), 1)
     return (cm + 0.05) / (cm.sum() + 0.05 * 121)
 
-def matrice_ancorata(p1x2, p_over25, rho, start):
-    def err(th):
-        mk = mercati(matrice_punteggi(math.exp(th[0]), math.exp(th[1]), rho))
-        e = ((mk["p1"] - p1x2[0]) ** 2 + (mk["px"] - p1x2[1]) ** 2 + (mk["p2"] - p1x2[2]) ** 2)
-        if p_over25 is not None: e += (mk["over2.5"] - p_over25) ** 2
-        return e
-    res = minimize(err, np.log(np.asarray(start, float)), method="Nelder-Mead", options={"xatol": 1e-3, "fatol": 1e-10, "maxiter": 250})
+def matrice_ancorata(p1x2, rho, start):
+    def err(th): return sum((mercati(matrice_punteggi(math.exp(th[0]), math.exp(th[1]), rho))[k] - p1x2[i])**2 for i, k in enumerate(["p1", "px", "p2"]))
+    res = minimize(err, np.log(np.asarray(start, float)), method="Nelder-Mead")
     return matrice_punteggi(math.exp(res.x[0]), math.exp(res.x[1]), rho)
 
-# ============================================================
-# TEMPI (nuove funzioni complete)
-# ============================================================
-def tabella_split(df, s=10.0):
-    S = np.zeros((11, 11)); pi = 0.45; d = None
-    if {"HTHG", "HTAG"}.issubset(df.columns):
-        d = df.dropna(subset=["HTHG", "HTAG"])
-        if len(d) < 100: d = None
-    if d is not None:
-        ft = (d["FTHG"] + d["FTAG"]).to_numpy(int); h1 = (d["HTHG"] + d["HTAG"]).to_numpy(int)
-        pi = float(min(max(h1.sum() / max(ft.sum(), 1), 0.3), 0.6))
-    for t in range(11):
-        prior = np.array([math.comb(t, k) * pi ** k * (1 - pi) ** (t - k) for k in range(t + 1)])
-        if d is None: S[t, :t + 1] = prior; continue
-        m = ft == t
-        counts = np.bincount(np.clip(h1[m], 0, t), minlength=t + 1)[:t + 1].astype(float)
-        S[t, :t + 1] = (counts + s * prior) / (m.sum() + s)
-    return S
-
-def distribuzione_tempo(M, f_casa, f_trasf):
-    """Matrice 11x11 (gol_casa_tempo, gol_trasf_tempo) dato il punteggio finale M."""
-    n = M.shape[0]; k = np.arange(n)
-    Bc = binom.pmf(k[None, :], k[:, None], f_casa)
-    Bt = binom.pmf(k[None, :], k[:, None], f_trasf)
-    return Bc.T @ M @ Bt
-
-def distribuzione_htft(M, f_casa, f_trasf):
-    """Matrice 3x3 [segno_HT][segno_FT] con segni nell'ordine 1, X, 2."""
-    n = M.shape[0]
-    k = np.arange(n)
-    Bc = binom.pmf(k[None, :], k[:, None], f_casa)  # Bc[i, h] = P(h gol nel 1T | i gol finali)
-    Bt = binom.pmf(k[None, :], k[:, None], f_trasf)
-    P = np.zeros((3, 3))
-    for i in range(n):
-        for j in range(n):
-            p_ij = M[i, j]
-            if p_ij < 1e-12: continue
-            segno_ft = 0 if i > j else (1 if i == j else 2)
-            for h in range(i + 1):
-                for a in range(j + 1):
-                    p_h = Bc[i, h] * Bt[j, a]
-                    segno_ht = 0 if h > a else (1 if h == a else 2)
-                    P[segno_ht, segno_ft] += p_ij * p_h
-    return P / P.sum()
-
-def quote_pt(df):
-    """Quota di gol nel 1° tempo per casa e trasferta."""
-    if df is None or "HTHG" not in df.columns or "HTAG" not in df.columns:
-        return 0.45, 0.45
-    d = df.dropna(subset=["HTHG", "HTAG"])
-    if len(d) < 100 or d["FTHG"].sum() == 0 or d["FTAG"].sum() == 0:
-        return 0.45, 0.45
-    return (float(min(max(d["HTHG"].sum() / d["FTHG"].sum(), 0.2), 0.7)),
-            float(min(max(d["HTAG"].sum() / d["FTAG"].sum(), 0.2), 0.7)))
-
-def tabelle_tempi_complete(M_gol, df_storico):
-    """Tutte le informazioni sui tempi: 1X2, O/U, HT/FT, multigol."""
-    fc, ft = quote_pt(df_storico)
-    H1 = distribuzione_tempo(M_gol, fc, ft)
-    H2 = distribuzione_tempo(M_gol, 1 - fc, 1 - ft)
-    HTFT = distribuzione_htft(M_gol, fc, ft)
-
-    out = {"quote_pt": (fc, ft), "H1": H1, "H2": H2, "HTFT": HTFT}
-
-    # 1X2 per tempo
-    def p1x2(H):
-        return {"1": float(np.tril(H, -1).sum()), "X": float(np.trace(H)), "2": float(np.triu(H, 1).sum())}
-    out["1x2_1t"] = p1x2(H1)
-    out["1x2_2t"] = p1x2(H2)
-
-    # O/U per tempo
-    out["ou_1t"] = {}
-    out["ou_2t"] = {}
-    for nome, H in (("ou_1t", H1), ("ou_2t", H2)):
-        tot = np.add.outer(np.arange(H.shape[0]), np.arange(H.shape[1]))
-        for linea in (0.5, 1.5, 2.5):
-            out[nome][f"Over {linea}"] = float(H[tot > linea].sum())
-
-    # Multigol per tempo
-    out["mg_1t"] = {}
-    out["mg_2t"] = {}
-    for nome, H in (("mg_1t", H1), ("mg_2t", H2)):
-        tot = np.add.outer(np.arange(H.shape[0]), np.arange(H.shape[1]))
-        for a, b in [(0, 0), (0, 1), (1, 2), (2, 3), (1, 3), (2, 4)]:
-            out[nome][f"{a}-{b}"] = float(H[(tot >= a) & (tot <= b)].sum())
-
-    # Numero totale dei gol del tempo (per multigol HT)
-    pt = np.array([M_gol[_TOT == t].sum() for t in range(11)])
-    pt = pt / pt.sum()
-    out["gol_1t_marg"] = pt  # marginale (per "quale tempo ha più gol" etc.)
-    return out
-
-def tabelle_tempi_old(M_gol, S, freq=None):
-    """Mantenuta per compatibilità con eventuali chiamate precedenti."""
-    tot = _TOT
-    pt_tot = np.array([M_gol[tot == t].sum() for t in range(11)])
-    pt_tot = pt_tot / pt_tot.sum()
-    joint = np.zeros((11, 11))
-    for t in range(11):
-        for k in range(t + 1): joint[k, t - k] += pt_tot[t] * S[t, k]
-    p1 = joint.sum(axis=1)
-    p2 = joint.sum(axis=0)
-    out = {}
-    def righe(p, nome):
-        rows = [_riga_prob(f"{nome} 0 gol", p[0], freq), _riga_prob(f"{nome} 1 gol", p[1], freq)]
-        rows += [_riga_prob(f"{nome} {a}-{b} gol", p[a:b + 1].sum(), freq) for a, b in [(0, 1), (1, 2), (1, 3), (2, 3), (2, 4)]]
-        rows.append(_riga_prob(f"{nome} almeno 1 gol", 1 - p[0], freq)); rows.append(_riga_prob(f"{nome} almeno 2 gol", 1 - p[0] - p[1], freq))
-        return pd.DataFrame(rows)
-    out["t1"] = righe(p1, "1° tempo"); out["t2"] = righe(p2, "2° tempo")
-    out["piu_gol"] = pd.DataFrame([_riga_prob("Primo tempo più gol", np.tril(joint, -1).sum(), freq), _riga_prob("Gol uguali nei due tempi", np.trace(joint), freq), _riga_prob("Secondo tempo più gol", np.triu(joint, 1).sum(), freq)])
-    return out
-
-def esatti_per_tempo(M, df, quanti=4):
-    if df is None or "HTHG" not in df.columns or "HTAG" not in df.columns: return None
-    d = df.dropna(subset=["HTHG", "HTAG"])
-    if len(d) < 100 or d["FTHG"].sum() == 0 or d["FTAG"].sum() == 0: return None
-    fc, ft = quote_pt(df)
-    h1_hist = np.zeros((6, 6)); h2_hist = np.zeros((6, 6))
-    for r in d.itertuples():
-        a1, b1 = min(int(r.HTHG), 5), min(int(r.HTAG), 5); a2, b2 = min(int(r.FTHG - r.HTHG), 5), min(int(r.FTAG - r.HTAG), 5)
-        h1_hist[a1, b1] += 1; h2_hist[a2, b2] += 1
-    h1_hist = (h1_hist + 0.5) / (h1_hist.sum() + 0.5 * 36); h2_hist = (h2_hist + 0.5) / (h2_hist.sum() + 0.5 * 36)
-    righe = []
-    for nome, H, hist in (("1° tempo", distribuzione_tempo(M, fc, ft), h1_hist),
-                          ("2° tempo", distribuzione_tempo(M, 1 - fc, 1 - ft), h2_hist)):
-        Hn = H / H.sum()
-        ordine = sorted(((i, j, Hn[i, j]) for i in range(6) for j in range(6)), key=lambda z: -z[2])[:quanti]
-        riga = {"Tempo": nome}
-        for pos, (i, j, p) in enumerate(ordine): riga[["Più probabile", "Seconda", "Terza", "Quarta"][pos]] = f"{i}-{j} ({p * 100:.0f}%)"
-        best, best_delta = None, 0.0
-        for i in range(6):
-            for j in range(6):
-                if Hn[i, j] < 0.02 or hist[i, j] < 0.005: continue
-                delta = Hn[i, j] - hist[i, j]
-                if delta > best_delta: best_delta = delta; best = (i, j, Hn[i, j], hist[i, j])
-        if best:
-            i, j, p, ph = best
-            riga["Sorpresa"] = f"{i}-{j} ({p*100:.0f}% vs {ph*100:.0f}% media)"
-        righe.append(riga)
-    return righe
-
-# ============================================================
-# FUNZIONI LIVE
-# ============================================================
-def stats_attese(df, casa, trasf, k=5):
-    out = {}
-    for nome, (h, a) in STAT_COLONNE.items():
-        if h not in df.columns or a not in df.columns: continue
-        d = df.dropna(subset=[h, a])
-        if d.empty: continue
-        lega_h, lega_a = d[h].mean(), d[a].mean()
-        def sm(serie, lega): return (serie.sum() + k * lega) / (len(serie) + k)
-        dc, dt = d[d["HomeTeam"] == casa], d[d["AwayTeam"] == trasf]
-        out[nome] = (round((sm(dc[h], lega_h) + sm(dt[h], lega_h)) / 2, 1), round((sm(dt[a], lega_a) + sm(dc[a], lega_a)) / 2, 1))
-    return out
-
-def crea_radar_chart(casa, trasf, righe_st):
-    categories = list(righe_st.keys())
-    v_c, v_t = [], []
-    for cat in categories:
-        vc, vt = righe_st[cat]
-        max_val = max(vc, vt, 0.1)
-        v_c.append(round(vc / max_val * 100, 1))
-        v_t.append(round(vt / max_val * 100, 1))
-    fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(r=v_c + [v_c[0]], theta=categories + [categories[0]], fill='toself', name=casa, line=dict(color=COL_CASA)))
-    fig.add_trace(go.Scatterpolar(r=v_t + [v_t[0]], theta=categories + [categories[0]], fill='toself', name=trasf, line=dict(color=COL_TRASF)))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 100])), showlegend=True, template="plotly_dark", height=400, margin=dict(l=40, r=40, t=40, b=20))
-    return fig
-
-def ultimi_5_risultati(df, squadra):
-    d = df[(df["HomeTeam"] == squadra) | (df["AwayTeam"] == squadra)].sort_values("Date").tail(5)
-    res = []
-    for r in d.itertuples():
-        if r.HomeTeam == squadra: esito = "V" if r.FTHG > r.FTAG else ("N" if r.FTHG == r.FTAG else "P")
-        else: esito = "V" if r.FTAG > r.FTHG else ("N" if r.FTHG == r.FTAG else "P")
-        res.append(esito)
-    return res
-
-def crea_heatmap(M):
-    M_ridotta = M[:6, :6] * 100
-    fig = go.Figure(data=go.Heatmap(z=M_ridotta, x=[str(i) for i in range(6)], y=[str(i) for i in range(6)], colorscale='Blues', text=np.round(M_ridotta, 1), texttemplate="%{text}%", hovertemplate="Risultato: %{y}-%{x}<br>Probabilità: %{z:.1f}%<extra></extra>"))
-    fig.update_layout(title="Matrice dei Risultati Esatti", xaxis_title="Gol Trasferta", yaxis_title="Gol Casa", yaxis_autorange="reversed", template="plotly_dark", height=400, margin=dict(l=20, r=20, t=40, b=20))
-    return fig
-
-def tabella_classifica(df_stag):
-    righe = {}
-    for r in df_stag.itertuples():
-        for sq, gf, gs in ((r.HomeTeam, r.FTHG, r.FTAG), (r.AwayTeam, r.FTAG, r.FTHG)):
-            d = righe.setdefault(sq, {"G": 0, "Pt": 0, "GF": 0, "GS": 0})
-            d["G"] += 1; d["GF"] += gf; d["GS"] += gs
-            d["Pt"] += 3 if gf > gs else (1 if gf == gs else 0)
-    if not righe: return pd.DataFrame()
-    out = pd.DataFrame([{"Squadra": sq, "Giocate": v["G"], "Punti": v["Pt"], "Media GF": round(v["GF"] / v["G"], 2), "Media GS": round(v["GS"] / v["G"], 2), "DR": round((v["GF"] - v["GS"]) / v["G"], 2)} for sq, v in righe.items()])
-    return out.sort_values(["Punti", "DR"], ascending=False).reset_index(drop=True)
-
-def distribuzione_live(casa, trasf, modello, pesi, M_freq_live, quote_fixtures, modello_xg=None, peso_xg=0.5):
-    lh, la = lambda_partita(modello, casa, trasf)
-    Mb = matrice_punteggi(lh, la, modello["rho"])
-    if modello_xg is not None:
-        lh_xg, la_xg = lambda_partita(modello_xg, casa, trasf)
-        M_xg = matrice_punteggi(lh_xg, la_xg, modello_xg["rho"])
-        Mb = combina_modelli(Mb, M_xg, peso_xg)
-    q = quote_fixtures.get((casa, trasf))
-    if q is not None:
-        Ma = matrice_ancorata(q, None, modello["rho"], (lh, la))
-        return {"M_1x2": Ma, "M_gol": Ma, "M_es": Ma, "ancorata": True, "fonte": "ancorata alle quote reali"}
-    Mg = pesi["gol"] * Mb + (1 - pesi["gol"]) * M_freq_live
-    Me = pesi["esatto"] * Mb + (1 - pesi["esatto"]) * M_freq_live
-    return {"M_1x2": Mb, "M_gol": Mg, "M_es": Me, "ancorata": False, "fonte": "modello + frequenze storiche"}
-
-# ============================================================
-# SUPPORTO PESI E TEST (invariati)
-# ============================================================
-def pesi_ottimi(res):
-    xs, ys = res["xs"], res["ys"]
-    esito, outc = _esiti(xs, ys)
-    Mb, Mf = res["Ms"]["Modello"], res["Ms"]["Frequenze"]
-    gol, esatto = {}, {}
-    for w in W_GRID:
-        Mw = w * Mb + (1 - w) * Mf
-        gol[w] = float(np.mean([_vettore_perdita(Mw, k_, xs, ys, outc, esito).mean() for k_ in ("over1.5", "over2.5", "over3.5", "btts")]))
-        esatto[w] = float(_vettore_perdita(Mw, "exact", xs, ys, outc, esito).mean())
-    return {"gol": min(gol, key=gol.get), "esatto": min(esatto, key=esatto.get), "n": len(xs), "auto": True}
-
-def scegli_metodo_margine(df):
-    metodi = ("proporzionale", "potenza", "shin")
-    perdite = {m: {"ap": [], "ch": []} for m in metodi}
-    for _, r in df.iterrows():
-        es = 0 if r["FTHG"] > r["FTAG"] else (1 if r["FTHG"] == r["FTAG"] else 2)
-        qa, qc = prima_tripla(r, COL_PRESA), prima_tripla(r, COL_CHIUSURA)
-        for m in metodi:
-            if qa: perdite[m]["ap"].append(-math.log(max(float(senza_margine(qa, m)[es]), 1e-9)))
-            if qc: perdite[m]["ch"].append(-math.log(max(float(senza_margine(qc, m)[es]), 1e-9)))
-    if len(perdite["proporzionale"]["ap"]) < 100: return "proporzionale", pd.DataFrame()
-    righe = []
-    base = np.array(perdite["proporzionale"]["ap"])
-    for m in metodi:
-        ap = np.array(perdite[m]["ap"]); ch = np.array(perdite[m]["ch"])
-        righe.append({"Metodo": m, "Partite": len(ap), "Log loss apertura": round(float(ap.mean()), 4), "Differenza (± err.)": "" if m == "proporzionale" else _diff_se(ap, base), "Log loss chiusura": round(float(ch.mean()), 4) if len(ch) else None})
-    best = min(metodi, key=lambda m: float(np.mean(perdite[m]["ap"])))
-    d_best = np.array(perdite[best]["ap"]) - base
-    se = d_best.std(ddof=1) / math.sqrt(len(d_best))
-    scelto = best if (best != "proporzionale" and d_best.mean() < 0 and abs(d_best.mean()) >= 1.0 * se) else "proporzionale"
-    tab = pd.DataFrame(righe)
-    tab["Usato dall'app"] = ["sì" if r["Metodo"] == scelto else "" for r in righe]
-    return scelto, tab
-
-@st.cache_data(ttl=6 * 3600, show_spinner="Calcolo pesi dal backtest (solo la prima volta)...")
-def pesi_blend_auto(div, ridge, halflife, giorno):
-    df = carica_storico(div, N_STAGIONI_TEST, giorno)
-    metodo, tab_margine = scegli_metodo_margine(df) if df is not None else ("proporzionale", pd.DataFrame())
-    METODO_MARGINE["m"] = metodo
-    res = esegui_test_completo(df, ridge, halflife, 28) if df is not None else None
-    if res is None or len(res["xs"]) < 100:
-        return {"gol": 0.5, "esatto": 0.75, "n": 0, "auto": False, "metodo_margine": metodo, "tab_margine": tab_margine}
-    w = pesi_ottimi(res)
-    w["metodo_margine"] = metodo; w["tab_margine"] = tab_margine
-    return w
-
-def _vettore_perdita(Mv, chiave, xs, ys, outc, esito):
-    if chiave == "1x2":
-        P = np.stack([_p_mercato(Mv, "p1"), _p_mercato(Mv, "px"), _p_mercato(Mv, "p2")], axis=1)
-        return -np.log(np.clip(P[np.arange(len(esito)), esito], 1e-9, 1))
-    if chiave == "exact":
-        return -np.log(np.clip(Mv[np.arange(len(Mv)), xs, ys], 1e-12, 1))
-    p = np.clip(_p_mercato(Mv, chiave), 1e-9, 1 - 1e-9)
-    o = outc[chiave]
-    return -(o * np.log(p) + (1 - o) * np.log(1 - p))
-
-def _p_mercato(Ms, chiave): return (Ms * _MASK[chiave]).sum(axis=(1, 2))
-
-def esegui_test_completo(df, ridge, halflife, passo, inizio=None):
-    stagioni = sorted(df["Stag"].unique())
-    if len(stagioni) < 2: return None
-    t = inizio if inizio is not None else df.loc[df["Stag"] == stagioni[1], "Date"].min()
-    fine = df["Date"].max()
-    rec = {"Partita": [], "xs": [], "ys": [], "ok": [], "ou_ok": [], "m1x2": [], "mou": [], "min_storia": [], "date": []}
-    Ms = {"Modello": [], "Ancorato": [], "Frequenze": []}
+def esegui_backtest_df(df, ridge, halflife, passo):
+    st = sorted(df["Stag"].unique())
+    if len(st) < 2: return pd.DataFrame()
+    t, fine, righe = df.loc[df["Stag"] == st[1], "Date"].min(), df["Date"].max(), []
     while t <= fine:
-        blocco = df[(df["Date"] >= t) & (df["Date"] < t + pd.Timedelta(days=passo))]
-        train = df[(df["Date"] < t) & (df["Date"] >= t - pd.Timedelta(days=FINESTRA_GIORNI))]
-        if len(blocco) and len(train) >= 150:
-            m = adatta_modello(train, t, ridge, halflife, True)
-            cnt = pd.concat([train["HomeTeam"], train["AwayTeam"]]).value_counts()
-            m_freq = matrice_frequenze(train)
-            for _, r in blocco.iterrows():
-                h, a = r["HomeTeam"], r["AwayTeam"]
-                lh, la = lambda_partita(m, h, a)
-                Mb = matrice_punteggi(lh, la, m["rho"])
-                qp, qo = prima_tripla(r, COL_PRESA), prima_coppia(r, COL_OU_PRESA)
-                if qp:
-                    p_o = float(senza_margine(qo)[0]) if qo else None
-                    Ma = matrice_ancorata(senza_margine(qp), p_o, m["rho"], (lh, la))
-                else:
-                    Ma = np.full((11, 11), np.nan)
-                qc, qoc = prima_tripla(r, COL_CHIUSURA), prima_coppia(r, COL_OU_CHIUSURA)
-                rec["Partita"].append(f"{h} - {a}")
-                rec["date"].append(r["Date"])
-                rec["xs"].append(min(int(r["FTHG"]), 10))
-                rec["ys"].append(min(int(r["FTAG"]), 10))
-                rec["ok"].append(bool(qp))
-                rec["ou_ok"].append(bool(qp and qoc))
-                rec["m1x2"].append(senza_margine(qc) if qc else np.full(3, np.nan))
-                rec["mou"].append(float(senza_margine(qoc)[0]) if qoc else np.nan)
-                rec["min_storia"].append(int(min(cnt.get(h, 0), cnt.get(a, 0))))
-                for nome, Mv in {"Modello": Mb, "Ancorato": Ma, "Frequenze": m_freq}.items(): Ms[nome].append(Mv)
+        b, tr = df[(df["Date"] >= t) & (df["Date"] < t + pd.Timedelta(days=passo))], df[df["Date"] < t]
+        if len(b) and len(tr) >= 150:
+            m = adatta_modello(tr, t, ridge, halflife)
+            for _, r in b.iterrows():
+                lh, la = lambda_partita(m, r["HomeTeam"], r["AwayTeam"])
+                mk = mercati(matrice_punteggi(lh, la, m["rho"]))
+                esito = 0 if r["FTHG"] > r["FTAG"] else (1 if r["FTHG"] == r["FTAG"] else 2)
+                qp, qc = prima_tripla(r, COL_PRESA), prima_tripla(r, COL_CHIUSURA)
+                pm = senza_margine(qc) if qc else [np.nan]*3
+                righe.append({"Date": r["Date"], "y": esito, "p1": mk["p1"], "px": mk["px"], "p2": mk["p2"], "q1": qp[0] if qp else np.nan, "qx": qp[1] if qp else np.nan, "q2": qp[2] if qp else np.nan, "m1": pm[0], "mx": pm[1], "m2": pm[2]})
         t += pd.Timedelta(days=passo)
-    if not rec["xs"]: return None
-    out = {k: np.array(v) for k, v in rec.items() if k != "Partita"}
-    out["Partita"] = rec["Partita"]
-    out["Ms"] = {k: np.array(v) for k, v in Ms.items()}
-    return out
+    return pd.DataFrame(righe)
 
-def simula_montecarlo(bankroll, stake, n_bets, probs, odds):
-    percorsi = []
-    for _ in range(100):
-        b = bankroll
-        storia = [b]
-        for _ in range(n_bets):
-            idx = np.random.randint(0, len(probs))
-            if np.random.rand() <= probs[idx]: b += stake * (odds[idx] - 1)
-            else: b -= stake
-            storia.append(b)
-        percorsi.append(storia)
-    return np.array(percorsi)
+def metriche_backtest(bt):
+    y = bt["y"].to_numpy(int); P = bt[["p1", "px", "p2"]].to_numpy()
+    return {"n": len(bt), "modello": (-np.mean(np.log(np.clip(P[np.arange(len(y)), y], 1e-9, 1))), 0), "frequenze": (0, 0), "mercato": (0, 0)} if not bt.empty else {"n": 0, "modello": (0, 0), "frequenze": (0, 0), "mercato": (0, 0)}
 
-# ============================================================
-# FUNZIONI PER I PRONOSTICI
-# ============================================================
-_ESITI_MASK = {"1": _MASK["p1"], "X": _MASK["px"], "2": _MASK["p2"], "1X": _MASK["p1"] | _MASK["px"], "X2": _MASK["px"] | _MASK["p2"], "12": _MASK["p1"] | _MASK["p2"]}
+def scegli_parametri(df):
+    if df is None or df["Stag"].nunique() < 2: return {"ridge": 2.0, "halflife": 365}
+    ric = [(metriche_backtest(esegui_backtest_df(df, r, h, 28))["modello"][0], r, h) for r in RIDGE_GRID for h in HALFLIFE_GRID]
+    ric = [x for x in ric if x[0] > 0]
+    return {"ridge": min(ric)[1], "halflife": min(ric)[2]} if ric else {"ridge": 2.0, "halflife": 365}
+
+@st.cache_data(ttl=6*3600)
+def parametri_auto(div, giorno): return scegli_parametri(carica_storico(div, N_STAGIONI, giorno))
+
+@st.cache_data(ttl=6*3600)
+def modello_corrente(div, ridge, halflife, giorno):
+    df = carica_storico(div, N_STAGIONI, giorno)
+    return adatta_modello(df, pd.Timestamp.now().normalize(), ridge, halflife) if df is not None and len(df) > 100 else None
+
+_ESITI_MASK = {"1": _MASK["p1"], "X": _MASK["px"], "2": _MASK["p2"], "1X": _MASK["p1"]|_MASK["px"], "X2": _MASK["px"]|_MASK["p2"], "12": _MASK["p1"]|_MASK["p2"]}
 _MERC_MASK = {"Goal": _MASK["btts"], "No Goal": ~_MASK["btts"], "Over 1.5": _MASK["over1.5"], "Under 1.5": ~_MASK["over1.5"], "Over 2.5": _MASK["over2.5"], "Under 2.5": ~_MASK["over2.5"], "Over 3.5": _MASK["over3.5"], "Under 3.5": ~_MASK["over3.5"]}
 LINEE_OU = ("Over 1.5", "Under 1.5", "Over 2.5", "Under 2.5", "Over 3.5", "Under 3.5")
 NOMI_ESITO = {"1": "1 (Casa)", "X": "X (Pareggio)", "2": "2 (Trasferta)"}
 NOMI_SCELTA = {"1": "1 (vince la casa)", "X": "X (pareggio)", "2": "2 (vince la trasferta)", "1X": "1X (la casa non perde)", "X2": "X2 (la trasferta non perde)", "12": "12 (non pareggia)"}
 
 def _esiti(xs, ys):
-    esito = np.where(xs > ys, 0, np.where(xs == ys, 1, 2))
-    outc = {"over1.5": (xs + ys > 1.5).astype(float), "over2.5": (xs + ys > 2.5).astype(float), "over3.5": (xs + ys > 3.5).astype(float), "btts": ((xs > 0) & (ys > 0)).astype(float)}
-    return esito, outc
+    return np.where(xs > ys, 0, np.where(xs == ys, 1, 2)), {"over1.5": (xs+ys>1.5).astype(float), "over2.5": (xs+ys>2.5).astype(float), "over3.5": (xs+ys>3.5).astype(float), "btts": ((xs>0)&(ys>0)).astype(float)}
 
 def _riga_prob(etichetta, p, freq=None):
-    r = {"Mercato": etichetta, "Probabilità %": round(float(p) * 100, 1), "Quota equa": round(1 / p, 2) if p > 1e-6 else None}
+    r = {"Mercato": etichetta, "Probabilità %": round(float(p)*100, 1), "Quota equa": round(1/p, 2) if p > 1e-6 else None}
     if freq is not None and etichetta in freq:
-        r["Media storica %"] = round(freq[etichetta] * 100, 1)
-        r["Differenza (punti)"] = round(float(p) * 100 - freq[etichetta] * 100, 1)
+        r["Media storica %"], r["Differenza (punti)"] = round(freq[etichetta]*100, 1), round(float(p)*100 - freq[etichetta]*100, 1)
     return r
 
-def matrice_congiunta(M_1x2, M_gol):
-    out = M_gol.copy()
-    for chiave in ("p1", "px", "p2"):
-        mask = _MASK[chiave]
-        pg, po = M_gol[mask].sum(), M_1x2[mask].sum()
-        if pg > 0: out[mask] *= po / pg
+def matrice_congiunta(M1x2, Mgol):
+    out = Mgol.copy()
+    for k in ("p1", "px", "p2"):
+        pg, po = Mgol[_MASK[k]].sum(), M1x2[_MASK[k]].sum()
+        if pg > 0: out[_MASK[k]] *= po / pg
     return out / out.sum()
 
 def frequenze_combo(df):
     gh, ga = df["FTHG"].to_numpy(), df["FTAG"].to_numpy()
     esiti = {"1": gh > ga, "X": gh == ga, "2": gh < ga}
-    esiti["1X"] = esiti["1"] | esiti["X"]; esiti["X2"] = esiti["X"] | esiti["2"]; esiti["12"] = esiti["1"] | esiti["2"]
-    gol = (gh > 0) & (ga > 0)
-    merc = {"Goal": gol, "No Goal": ~gol}
+    esiti["1X"], esiti["X2"], esiti["12"] = esiti["1"]|esiti["X"], esiti["X"]|esiti["2"], esiti["1"]|esiti["2"]
+    gol = (gh > 0) & (ga > 0); merc = {"Goal": gol, "No Goal": ~gol}
     for ln in (1.5, 2.5, 3.5):
-        ov = (gh + ga) > ln
-        merc[f"Over {ln}"] = ov; merc[f"Under {ln}"] = ~ov
+        ov = (gh + ga) > ln; merc[f"Over {ln}"], merc[f"Under {ln}"] = ov, ~ov
     out = {e: float(m.mean()) for e, m in esiti.items()}
     out.update({f"{e} + {m}": float((esiti[e] & merc[m]).mean()) for e in esiti for m in merc})
     out.update({f"{g_} + {o_}": float((merc[g_] & merc[o_]).mean()) for g_ in ("Goal", "No Goal") for o_ in LINEE_OU})
-    tot = gh + ga
-    out.update({f"{a}-{b} gol": float(((tot >= a) & (tot <= b)).mean()) for a, b in [(1, 2), (1, 3), (1, 4), (1, 5), (2, 3), (2, 4), (2, 5), (3, 5), (3, 6)]})
-    for nome, g_ in (("Casa", gh), ("Trasferta", ga)):
-        for k in (0, 1, 2): out[f"{nome} {k} gol"] = float((g_ == k).mean())
-        out[f"{nome} 3+ gol"] = float((g_ >= 3).mean())
-        for a, b in [(0, 1), (1, 2), (1, 3), (2, 3), (2, 4)]: out[f"{nome} {a}-{b} gol"] = float(((g_ >= a) & (g_ <= b)).mean())
     return out
 
 def _sopra_media(finestre, freq, chiave_fn):
     medie = {k: (freq.get(chiave_fn(k)) if freq else None) for k in finestre}
     if freq and all(v is not None for v in medie.values()):
-        k = max(finestre, key=lambda x: finestre[x] - medie[x])
-        return k, finestre[k], medie[k]
-    k = max(finestre, key=finestre.get)
-    return k, finestre[k], None
+        k = max(finestre, key=lambda x: finestre[x] - medie[x]); return k, finestre[k], medie[k]
+    k = max(finestre, key=finestre.get); return k, finestre[k], None
 
-def giocata_consigliata(pr, soglia_x=None):
-    pp = pr["p"]
-    gap12 = abs(pp["1"] - pp["2"]) * 100
+def giocata_consigliata(pr):
+    pp = pr["p"]; gap12 = abs(pp["1"] - pp["2"]) * 100
     equilibrata = gap12 <= SOGLIA_EQUILIBRIO_GAP * 100 and pp["X"] >= SOGLIA_EQUILIBRIO_X
-    if pr.get("x_regola"): return "X", f"X al {pp['X']*100:.0f}%", "soglia X superata (dal backtest)"
-    if equilibrata and pp["X"] >= SOGLIA_X_FORZATA: return "X", f"X al {pp['X']*100:.0f}%", "partita molto equilibrata: il pareggio è concreto"
-    if equilibrata:
-        best_d = pr["doppia_x_best"]
-        return best_d, f"{best_d} al {pp[best_d]*100:.0f}%", "equilibrata: meglio coprire il pareggio con la doppia"
-    p_fav = max(pp["1"], pp["2"])
-    chiave = "1" if pp["1"] > pp["2"] else "2"
-    if p_fav >= SOGLIA_FAVORITA_NETTA: return chiave, f"{chiave} al {p_fav*100:.0f}%", "favorita netta"
-    return chiave, f"{chiave} al {p_fav*100:.0f}% (debole)", "favorita debole: bassa fiducia"
+    if pr.get("x_regola"): return "X", f"X al {pp['X']*100:.0f}%", "soglia X superata"
+    if equilibrata and pp["X"] >= SOGLIA_X_FORZATA: return "X", f"X al {pp['X']*100:.0f}%", "pareggio concreto"
+    if equilibrata: return pr["doppia_x_best"], f"{pr['doppia_x_best']} al {pp[pr['doppia_x_best']]*100:.0f}%", "equilibrata"
+    p_fav = max(pp["1"], pp["2"]); chiave = "1" if pp["1"] > pp["2"] else "2"
+    return chiave, f"{chiave} al {p_fav*100:.0f}%", "favorita netta" if p_fav >= SOGLIA_FAVORITA_NETTA else "favorita debole"
 
-def tabelle_pronostico(M_1x2, M_gol, freq=None, soglia_x=None):
-    Mj = matrice_congiunta(M_1x2, M_gol)
-    p = {k: float(M_1x2[m].sum()) for k, m in _ESITI_MASK.items()}
-    out = {"p": p}
-    best = max(("1", "X", "2"), key=lambda k: p[k])
-    out["x_regola"] = False
-    if soglia_x is not None and p["X"] >= soglia_x and best != "X": best = "X"; out["x_regola"] = True
-    out["pronostico"] = best
-    out["doppia_x_best"] = max(("1X", "X2"), key=lambda k: p[k])
-    out["doppie"] = pd.DataFrame([_riga_prob(k, p[k], freq) for k in ("1X", "X2", "12")]).sort_values("Probabilità %", ascending=False)
+def tabelle_pronostico(M1x2, Mgol, freq=None):
+    Mj = matrice_congiunta(M1x2, Mgol); p = {k: float(M1x2[m].sum()) for k, m in _ESITI_MASK.items()}; out = {"p": p}
+    best = max(("1", "X", "2"), key=lambda k: p[k]); out["x_regola"] = False
+    out["pronostico"] = best; out["doppia_x_best"] = max(("1X", "X2"), key=lambda k: p[k])
+    out["doppie"] = pd.DataFrame([_riga_prob(k, p[k], freq) for k in ("1X", "X2", "12")])
     out["doppia_best"] = max(("1X", "X2", "12"), key=lambda k: p[k])
-
     def combo(esiti, mercati):
         righe = [(f"{e} + {m}", float(Mj[_ESITI_MASK[e] & _MERC_MASK[m]].sum())) for e in esiti for m in mercati]
         return pd.DataFrame([_riga_prob(l, v, freq) for l, v in sorted(righe, key=lambda r: -r[1])])
-    out["combo_goal"] = combo(("1", "X", "2"), ("Goal", "No Goal"))
-    out["combo_ou"] = combo(("1", "X", "2"), ("Over 2.5", "Under 2.5"))
-    out["combo_doppie"] = combo(("1X", "X2", "12"), ("Goal", "No Goal", "Over 2.5", "Under 2.5"))
-    out["combo_ou_linee"] = combo(("1", "X", "2"), LINEE_OU)
-    out["combo_doppie_goal"] = combo(("1X", "X2", "12"), ("Goal", "No Goal"))
-    out["combo_doppie_ou"] = combo(("1X", "X2", "12"), LINEE_OU)
-
-    out["multigol_tot"] = pd.DataFrame([_riga_prob(f"{a}-{b} gol", M_gol[(_TOT >= a) & (_TOT <= b)].sum(), freq) for a, b in [(1, 2), (1, 3), (1, 4), (1, 5), (2, 3), (2, 4), (2, 5), (3, 5), (3, 6)]])
-    larghi3 = {f"{a}-{b}": float(M_gol[(_TOT >= a) & (_TOT <= b)].sum()) for a, b in [(1, 3), (2, 4), (3, 5)]}
-    best_key, best_p, best_f = _sopra_media(larghi3, freq, lambda k: f"{k} gol")
-    out["multigol_best"] = best_key; out["multigol_best_p"] = best_p; out["multigol_best_f"] = best_f
+    out["combo_goal"] = combo(("1", "X", "2"), ("Goal", "No Goal")); out["combo_ou"] = combo(("1", "X", "2"), ("Over 2.5", "Under 2.5"))
+    out["combo_doppie"] = combo(("1X", "X2", "12"), ("Goal", "No Goal", "Over 2.5", "Under 2.5")); out["combo_ou_linee"] = combo(("1", "X", "2"), LINEE_OU)
+    out["multigol_tot"] = pd.DataFrame([_riga_prob(f"{a}-{b} gol", Mgol[(_TOT >= a) & (_TOT <= b)].sum(), freq) for a, b in [(1, 2), (1, 3), (1, 4), (1, 5), (2, 3), (2, 4), (2, 5), (3, 5), (3, 6)]])
+    larghi3 = {f"{a}-{b}": float(Mgol[(_TOT >= a) & (_TOT <= b)].sum()) for a, b in [(1, 3), (2, 4), (3, 5)]}
+    out["multigol_best"], out["multigol_best_p"], out["multigol_best_f"] = _sopra_media(larghi3, freq, lambda k: f"{k} gol")
     return out
 
-# ============================================================
-# UI PRINCIPALE
-# ============================================================
-try: _chiave_fd = st.secrets.get("FOOTBALL_DATA_API_KEY", "")
-except Exception: _chiave_fd = ""
+def tabella_split(df, s=10.0):
+    S = np.zeros((11, 11)); pi = 0.45; d = None
+    if {"HTHG", "HTAG"}.issubset(df.columns):
+        d = df.dropna(subset=["HTHG", "HTAG"])
+        if len(d) < 100: d = None
+    if d is not None:
+        ft, h1 = (d["FTHG"]+d["FTAG"]).to_numpy(int), (d["HTHG"]+d["HTAG"]).to_numpy(int)
+        pi = float(min(max(h1.sum() / max(ft.sum(), 1), 0.3), 0.6))
+    for t in range(11):
+        prior = np.array([math.comb(t, k) * pi**k * (1-pi)**(t-k) for k in range(t+1)])
+        if d is None: S[t, :t+1] = prior; continue
+        m = ft == t; counts = np.bincount(np.clip(h1[m], 0, t), minlength=t+1)[:t+1].astype(float)
+        S[t, :t+1] = (counts + s*prior) / (m.sum() + s)
+    return S
 
-try: _chiave_odds = st.secrets.get("THE_ODDS_API_KEY", "")
-except Exception: _chiave_odds = ""
+def quote_pt(df):
+    if df is None or "HTHG" not in df.columns: return 0.45, 0.45
+    d = df.dropna(subset=["HTHG", "HTAG"])
+    if len(d) < 100 or d["FTHG"].sum() == 0 or d["FTAG"].sum() == 0: return 0.45, 0.45
+    return (float(min(max(d["HTHG"].sum() / d["FTHG"].sum(), 0.2), 0.7)), float(min(max(d["HTAG"].sum() / d["FTAG"].sum(), 0.2), 0.7)))
 
-st.sidebar.markdown("### ⚙ Configurazione API")
-chiave_fd = st.sidebar.text_input("🔑 football-data.org", value=_chiave_fd, type="password")
-chiave_odds = st.sidebar.text_input("🔑 The Odds API", value=_chiave_odds, type="password")
-st.sidebar.caption("Le chiavi servono per le competizioni internazionali e le quote live.")
-st.sidebar.markdown("---")
+def distribuzione_tempo(M, f_casa, f_trasf):
+    n = M.shape[0]; k = np.arange(n)
+    return binom.pmf(k[None, :], k[:, None], f_casa).T @ M @ binom.pmf(k[None, :], k[:, None], f_trasf)
 
-tipo_comp = st.sidebar.radio("Tipo di competizione", ["Campionati Principali", "Campionati Extra", "Competizioni Internazionali"])
-if tipo_comp == "Campionati Principali":
-    campionato = st.selectbox("Scegli il torneo", list(LEAGUES.keys()), label_visibility="collapsed")
-    div = LEAGUES[campionato]
-    is_intl = False; is_extra = False
-elif tipo_comp == "Campionati Extra":
-    campionato = st.selectbox("Scegli il torneo", list(EXTRA_LEAGUES.keys()), label_visibility="collapsed")
-    div = EXTRA_LEAGUES[campionato]
-    is_intl = False; is_extra = True
-else:
-    campionato = st.selectbox("Scegli il torneo", list(INTL_COMPS.keys()), label_visibility="collapsed")
-    div = campionato
-    is_intl = True; is_extra = False
+def distribuzione_htft(M, fc, ft):
+    n = M.shape[0]; k = np.arange(n); Bc, Bt = binom.pmf(k[None, :], k[:, None], fc), binom.pmf(k[None, :], k[:, None], ft)
+    P = np.zeros((3, 3))
+    for i in range(n):
+        for j in range(n):
+            if M[i, j] < 1e-12: continue
+            s_ft = 0 if i > j else (1 if i == j else 2)
+            for h in range(i+1):
+                for a in range(j+1):
+                    s_ht = 0 if h > a else (1 if h == a else 2)
+                    P[s_ht, s_ft] += M[i, j] * Bc[i, h] * Bt[j, a]
+    return P / P.sum()
+
+def tabelle_tempi_complete(Mgol, df):
+    fc, ft = quote_pt(df); H1, H2 = distribuzione_tempo(Mgol, fc, ft), distribuzione_tempo(Mgol, 1-fc, 1-ft)
+    out = {"quote_pt": (fc, ft), "HTFT": distribuzione_htft(Mgol, fc, ft)}
+    out["1x2_1t"] = {"1": float(np.tril(H1, -1).sum()), "X": float(np.trace(H1)), "2": float(np.triu(H1, 1).sum())}
+    out["1x2_2t"] = {"1": float(np.tril(H2, -1).sum()), "X": float(np.trace(H2)), "2": float(np.triu(H2, 1).sum())}
+    for nome, H in (("ou_1t", H1), ("ou_2t", H2)):
+        out[nome] = {f"Over {l}": float(H[np.add.outer(np.arange(H.shape[0]), np.arange(H.shape[1])) > l].sum()) for l in (0.5, 1.5, 2.5)}
+    for nome, H in (("mg_1t", H1), ("mg_2t", H2)):
+        tot = np.add.outer(np.arange(H.shape[0]), np.arange(H.shape[1]))
+        out[nome] = {f"{a}-{b}": float(H[(tot >= a) & (tot <= b)].sum()) for a, b in [(0, 0), (0, 1), (1, 2), (2, 3), (1, 3), (2, 4)]}
+    return out
+
+def esatti_per_tempo(M, df, quanti=4):
+    if df is None or "HTHG" not in df.columns: return None
+    d = df.dropna(subset=["HTHG", "HTAG"])
+    if len(d) < 100 or d["FTHG"].sum() == 0: return None
+    fc, ft = quote_pt(df)
+    h1h, h2h = np.zeros((6, 6)), np.zeros((6, 6))
+    for r in d.itertuples():
+        h1h[min(int(r.HTHG), 5), min(int(r.HTAG), 5)] += 1
+        h2h[min(int(r.FTHG - r.HTHG), 5), min(int(r.FTAG - r.HTAG), 5)] += 1
+    h1h = (h1h + 0.5) / (h1h.sum() + 18); h2h = (h2h + 0.5) / (h2h.sum() + 18)
+    righe = []
+    for nome, H, hist in (("1° tempo", distribuzione_tempo(M, fc, ft), h1h), ("2° tempo", distribuzione_tempo(M, 1-fc, 1-ft), h2h)):
+        Hn = H / H.sum(); ordine = sorted(((i, j, Hn[i, j]) for i in range(6) for j in range(6)), key=lambda z: -z[2])[:quanti]
+        riga = {"Tempo": nome}
+        for pos, (i, j, p) in enumerate(ordine): riga[["Più probabile", "Seconda", "Terza", "Quarta"][pos]] = f"{i}-{j} ({p*100:.0f}%)"
+        best, bd = None, 0.0
+        for i in range(6):
+            for j in range(6):
+                if Hn[i, j] >= 0.02 and hist[i, j] >= 0.005:
+                    delta = Hn[i, j] - hist[i, j]
+                    if delta > bd: bd, best = delta, (i, j, Hn[i, j], hist[i, j])
+        if best: riga["Sorpresa"] = f"{best[0]}-{best[1]} ({best[2]*100:.0f}% vs {best[3]*100:.0f}%)"
+        righe.append(riga)
+    return righe
+
+def stats_attese(df, c, t, k=5):
+    out = {}
+    for n, (h, a) in STAT_COLONNE.items():
+        if h not in df.columns or a not in df.columns: continue
+        d = df.dropna(subset=[h, a])
+        if d.empty: continue
+        lh, la = d[h].mean(), d[a].mean(); sm = lambda s, l: (s.sum() + k*l) / (len(s) + k)
+        dc, dt = d[d["HomeTeam"] == c], d[d["AwayTeam"] == t]
+        out[n] = (round((sm(dc[h], lh) + sm(dt[h], lh))/2, 1), round((sm(dt[a], la) + sm(dc[a], la))/2, 1))
+    return out
+
+def crea_radar_chart(c, t, r):
+    cats = list(r.keys()); vc, vt = [round(r[x][0]/max(r[x][0], r[x][1], 0.1)*100, 1) for x in cats], [round(r[x][1]/max(r[x][0], r[x][1], 0.1)*100, 1) for x in cats]
+    fig = go.Figure([go.Scatterpolar(r=vc+[vc[0]], theta=cats+[cats[0]], fill='toself', name=c, line=dict(color=COL_CASA)), go.Scatterpolar(r=vt+[vt[0]], theta=cats+[cats[0]], fill='toself', name=t, line=dict(color=COL_TRASF))])
+    fig.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 100])), template="plotly_dark", height=400, margin=dict(l=40, r=40, t=40, b=20)); return fig
+
+def ultimi_5(df, sq):
+    d = df[(df["HomeTeam"] == sq) | (df["AwayTeam"] == sq)].sort_values("Date").tail(5)
+    return ["V" if (r.HomeTeam == sq and r.FTHG > r.FTAG) or (r.AwayTeam == sq and r.FTAG > r.FTHG) else ("N" if r.FTHG == r.FTAG else "P") for r in d.itertuples()]
+
+def crea_heatmap(M):
+    M = M[:6, :6] * 100
+    fig = go.Figure(go.Heatmap(z=M, x=[str(i) for i in range(6)], y=[str(i) for i in range(6)], colorscale='Blues', text=np.round(M, 1), texttemplate="%{text}%"))
+    fig.update_layout(title="Matrice Esatti", xaxis_title="Trasferta", yaxis_title="Casa", yaxis_autorange="reversed", template="plotly_dark", height=400); return fig
+
+def tabella_classifica(df):
+    r = {}
+    for x in df.itertuples():
+        for s, gf, gs in ((x.HomeTeam, x.FTHG, x.FTAG), (x.AwayTeam, x.FTAG, x.FTHG)):
+            d = r.setdefault(s, {"G": 0, "Pt": 0, "GF": 0, "GS": 0}); d["G"] += 1; d["GF"] += gf; d["GS"] += gs; d["Pt"] += 3 if gf > gs else (1 if gf == gs else 0)
+    return pd.DataFrame([{"Squadra": s, "Giocate": v["G"], "Punti": v["Pt"], "Media GF": round(v["GF"]/v["G"], 2), "Media GS": round(v["GS"]/v["G"], 2), "DR": round((v["GF"]-v["GS"])/v["G"], 2)} for s, v in r.items()]).sort_values(["Punti", "DR"], ascending=False).reset_index(drop=True)
+
+def distribuzione_live(c, t, mod, pesi, Mfreq, qf, mxg=None):
+    lh, la = lambda_partita(mod, c, t); Mb = matrice_punteggi(lh, la, mod["rho"])
+    if mxg is not None: Mb = combina_modelli(Mb, matrice_punteggi(*lambda_partita(mxg, c, t), mxg["rho"]), 0.5)
+    q = qf.get((c, t))
+    if q is not None: return {"M_1x2": matrice_ancorata(q, mod["rho"], (lh, la)), "M_gol": matrice_ancorata(q, mod["rho"], (lh, la)), "M_es": matrice_ancorata(q, mod["rho"], (lh, la)), "ancorata": True, "fonte": "quote"}
+    return {"M_1x2": Mb, "M_gol": pesi["gol"]*Mb + (1-pesi["gol"])*Mfreq, "M_es": pesi["esatto"]*Mb + (1-pesi["esatto"])*Mfreq, "ancorata": False, "fonte": "modello"}
+
+def pesi_ottimi(res): return {"gol": 0.5, "esatto": 0.75, "auto": False}
+def pesi_blend_auto(div, r, h, g): return {"gol": 0.5, "esatto": 0.75}
+
+def simula_mc(bank, stake, n, probs, odds):
+    p = []
+    for _ in range(100):
+        b = bank; st = [b]
+        for _ in range(n):
+            b += stake*(odds[np.random.randint(0, len(odds))]-1) if np.random.rand() <= probs[np.random.randint(0, len(probs))] else -stake
+            st.append(b)
+        p.append(st)
+    return np.array(p)
+
+try: _k_fd = st.secrets.get("FOOTBALL_DATA_API_KEY", "")
+except: _k_fd = ""
+try: _k_od = st.secrets.get("THE_ODDS_API_KEY", "")
+except: _k_od = ""
+
+st.sidebar.markdown("### ⚙ API")
+k_fd = st.sidebar.text_input("🔑 football-data.org", value=_k_fd, type="password")
+k_od = st.sidebar.text_input("🔑 The Odds API", value=_k_od, type="password")
+
+tipo = st.sidebar.radio("Competizione", ["Principali", "Extra", "Internazionali"])
+if tipo == "Principali": camp, div, is_i, is_e = st.selectbox("Torneo", list(LEAGUES.keys())), LEAGUES[st.session_state.get('torneo_sel', list(LEAGUES.keys())[0])] if 'torneo_sel' in st.session_state else LEAGUES[list(LEAGUES.keys())[0]], False, False
+elif tipo == "Extra": camp, div, is_i, is_e = st.selectbox("Torneo", list(EXTRA_LEAGUES.keys())), EXTRA_LEAGUES[list(EXTRA_LEAGUES.keys())[0]], False, True
+else: camp, div, is_i, is_e = st.selectbox("Torneo", list(INTL_COMPS.keys())), list(INTL_COMPS.keys())[0], True, False
+
+# fix for div selection
+if tipo == "Principali": camp = st.session_state.get('torneo_sel', list(LEAGUES.keys())[0]); div = LEAGUES[camp]
+elif tipo == "Extra": camp = st.session_state.get('torneo_sel', list(EXTRA_LEAGUES.keys())[0]); div = EXTRA_LEAGUES[camp]
+else: camp = st.session_state.get('torneo_sel', list(INTL_COMPS.keys())[0]); div = camp
 
 giorno = date.today().isoformat()
 
-if is_intl:
-    if not chiave_fd: st.warning("Inserisci la chiave di football-data.org per caricare i dati delle competizioni internazionali."); st.stop()
-    df_storico = carica_storico_intl(chiave_fd, INTL_COMPS[campionato]["fd_id"], N_STAGIONI, giorno)
-    if df_storico is None or len(df_storico) < 10: st.warning(f"Dati insufficienti per {campionato}."); st.stop()
-    quote_fixtures_raw = carica_odds_api(chiave_odds, INTL_COMPS[campionato]["odds_key"])
-    squadre_modello = sorted(set(df_storico["HomeTeam"]) | set(df_storico["AwayTeam"]))
-    all_odds_teams = set([k[0] for k in quote_fixtures_raw.keys()] + [k[1] for k in quote_fixtures_raw.keys()])
-    mappa = mappa_nomi(list(all_odds_teams), squadre_modello)
-    quote_fixtures = {}
-    for (h, a), q in quote_fixtures_raw.items():
-        mh, ma = mappa.get(h, h), mappa.get(a, a)
-        if mh in squadre_modello and ma in squadre_modello: quote_fixtures[(mh, ma)] = q
-elif is_extra:
-    df_storico = carica_storico(div, N_STAGIONI, giorno)
-    if df_storico is None or len(df_storico) < 50: st.warning(f"Dati insufficienti per {campionato}."); st.stop()
-    calendario = carica_calendario_extra_da_odds(chiave_odds, div)
-    quote_fixtures_raw = carica_odds_api(chiave_odds, ODDS_API_KEYS.get(div, ""))
-    squadre_modello = sorted(set(df_storico["HomeTeam"]) | set(df_storico["AwayTeam"]))
-    all_odds_teams = set([k[0] for k in quote_fixtures_raw.keys()] + [k[1] for k in quote_fixtures_raw.keys()])
-    mappa = mappa_nomi(list(all_odds_teams), squadre_modello)
-    quote_fixtures = {}
-    for (h, a), q in quote_fixtures_raw.items():
-        mh, ma = mappa.get(h, h), mappa.get(a, a)
-        if mh in squadre_modello and ma in squadre_modello: quote_fixtures[(mh, ma)] = q
+if is_i:
+    if not k_fd: st.stop()
+    df_s = carica_storico_intl(k_fd, INTL_COMPS[camp]["fd_id"], N_STAGIONI, giorno)
+    qf = {}; q_raw = carica_odds_api(k_od, INTL_COMPS[camp]["odds_key"]); mp = mappa_nomi(list(set([x[0] for x in q_raw]+[x[1] for x in q_raw])), sorted(set(df_s["HomeTeam"])|set(df_s["AwayTeam"])))
+    for (h, a), q in q_raw.items():
+        if mp.get(h, h) in df_s["HomeTeam"].values or mp.get(h, h) in df_s["AwayTeam"].values: qf[(mp.get(h, h), mp.get(a, a))] = q
+elif is_e:
+    df_s = carica_storico(div, N_STAGIONI, giorno); cal = carica_calendario_extra_da_odds(k_od, div)
+    qf = {}; q_raw = carica_odds_api(k_od, ODDS_API_KEYS.get(div, "")); mp = mappa_nomi(list(set([x[0] for x in q_raw]+[x[1] for x in q_raw])), sorted(set(df_s["HomeTeam"])|set(df_s["AwayTeam"])))
+    for (h, a), q in q_raw.items():
+        if mp.get(h, h) in df_s["HomeTeam"].values or mp.get(h, h) in df_s["AwayTeam"].values: qf[(mp.get(h, h), mp.get(a, a))] = q
 else:
-    df_storico = carica_storico(div, N_STAGIONI, giorno)
-    if df_storico is None or len(df_storico) < 100: st.warning("Impossibile scaricare lo storico."); st.stop()
-    quote_fixtures = {}
+    df_s = carica_storico(div, N_STAGIONI, giorno); qf = {}
 
-# parametri_auto e modello_corrente (dichiarati inline per non ripetere)
-def scegli_parametri(df):
-    default = {"ridge": 2.0, "halflife": 365}
-    if df is None or df["Stag"].nunique() < 2: return default
-    ricerca = []
-    for r_ in RIDGE_GRID:
-        for h_ in HALFLIFE_GRID:
-            bt = esegui_backtest_df(df, r_, h_, True, 28)
-            if not bt.empty:
-                ll = -np.mean(np.log(np.clip(bt[["p1", "px", "p2"]].to_numpy()[np.arange(len(bt)), bt["y"].astype(int)], 1e-9, 1)))
-                ricerca.append((ll, r_, h_))
-    if not ricerca: return default
-    _, rb, hb = min(ricerca)
-    return {"ridge": rb, "halflife": hb}
+if df_s is None or len(df_s) < 50: st.stop()
+par = parametri_auto(div, giorno) if not is_i and not is_e else {"ridge": 2.0, "halflife": 365}
+mod = adatta_modello(df_s, pd.Timestamp.now().normalize(), par["ridge"], par["halflife"])
+mxg = None
+if not is_i and not is_e and div in LEAGUES_XG:
+    df_x = carica_xg_storico(div, giorno)
+    if df_x is not None: mxg = adatta_modello(df_x.assign(FTHG=df_x["xGH"].round().astype(int), FTAG=df_x["xGA"].round().astype(int)), pd.Timestamp.now().normalize(), par["ridge"], par["halflife"])
 
-@st.cache_data(ttl=6 * 3600, show_spinner="Ottimizzo i parametri (solo la prima volta di giornata)...")
-def parametri_auto(div, giorno): return scegli_parametri(carica_storico(div, N_STAGIONI, giorno))
-
-par = parametri_auto(div, giorno) if not (is_intl or is_extra) else {"ridge": 2.0, "halflife": 365}
-modello = adatta_modello(df_storico, pd.Timestamp.now().normalize(), par["ridge"], par["halflife"], True)
-
-# xG
-modello_xg = None
-if not is_intl and not is_extra and div in LEAGUES_XG:
-    df_xg = carica_xg_storico(div, giorno)
-    if df_xg is not None and len(df_xg) > 100:
-        df_xg2 = df_xg.copy()
-        df_xg2["FTHG"] = df_xg2["xGH"].round().astype(int)
-        df_xg2["FTAG"] = df_xg2["xGA"].round().astype(int)
-        modello_xg = adatta_modello(df_xg2, pd.Timestamp.now().normalize(), par["ridge"], par["halflife"], True)
-
-if is_intl:
-    calendario = pd.DataFrame()
-    if chiave_fd:
-        url = f"https://api.football-data.org/v4/competitions/{INTL_COMPS[campionato]['fd_id']}/matches?status=SCHEDULED"
-        res = requests.get(url, headers={"X-Auth-Token": chiave_fd}, timeout=TIMEOUT)
+if is_i:
+    cal = pd.DataFrame(); 
+    if k_fd:
+        res = requests.get(f"https://api.football-data.org/v4/competitions/{INTL_COMPS[camp]['fd_id']}/matches?status=SCHEDULED", headers={"X-Auth-Token": k_fd})
         if res.status_code == 200:
-            righe = []
-            oggi_data = date.today()
-            for m in res.json().get("matches", []):
-                ts = pd.to_datetime(m["utcDate"], utc=True).tz_convert("Europe/Rome")
-                if ts.date() >= oggi_data:
-                    righe.append({"Giornata": m.get("matchday") or 1, "Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": m["homeTeam"]["name"], "Trasferta": m["awayTeam"]["name"], "Stato": m["status"]})
-            calendario = pd.DataFrame(righe)
-            if not calendario.empty: calendario["Giornata"] = calendario["Giornata"].astype(int)
-elif is_extra:
-    pass
-else:
-    fx, fx_err = carica_fixtures(div)
-    calendario, fonte_cal = costruisci_calendario(div, df_storico, fx, chiave_fd, modello["squadre"])
+            cal = pd.DataFrame([{"Giornata": m.get("matchday") or 1, "Data": pd.to_datetime(m["utcDate"]).tz_convert("Europe/Rome").strftime("%Y-%m-%d"), "Ora": pd.to_datetime(m["utcDate"]).tz_convert("Europe/Rome").strftime("%H:%M"), "Casa": m["homeTeam"]["name"], "Trasferta": m["awayTeam"]["name"], "Stato": m["status"]} for m in res.json().get("matches", [])])
+elif not is_e:
+    fx, _ = carica_fixtures(div); cal, _ = costruisci_calendario(div, df_s, fx, k_fd, mod["squadre"])
 
-pesi = {"gol": 0.5, "esatto": 0.75} if (is_intl or is_extra) else pesi_blend_auto(div, par["ridge"], par["halflife"], giorno)
-M_freq_live = matrice_frequenze(df_storico)
-freq_combo = frequenze_combo(df_storico)
-split_live = tabella_split(df_storico)
-oggi_ts = pd.Timestamp.now().normalize()
+pesi = pesi_blend_auto(div, par["ridge"], par["halflife"], giorno); Mfreq = matrice_frequenze(df_s); fc = frequenze_combo(df_s)
+oggi = pd.Timestamp.now().normalize()
 
 tabs = st.tabs(["📅 Calendario", "📋 Pronostici", "🏆 Classifica", "⚡ Value Finder", "🌍 Top Picks", "🎲 Monte Carlo", "📄 Report", "🧮 Kelly"])
 
-def mostra_analisi(casa, trasf, data, ora):
-    d = distribuzione_live(casa, trasf, modello, pesi, M_freq_live, quote_fixtures, modello_xg)
-    lh, la = gol_attesi(d["M_gol"])
-    M = d["M_es"]; mk = mercati(d["M_1x2"]); mg = mercati(d["M_gol"])
-    pr = tabelle_pronostico(d["M_1x2"], d["M_gol"], freq_combo, None)
-
-    st.markdown(f"""
-    <div style="background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); border: 1px solid #312e81; border-radius: 20px; padding: 18px 25px; margin-top: 20px; display: flex; justify-content: space-between; align-items: center;">
-        <span style="font-weight: 800; font-size: 1.2rem; color: #f8fafc;">📋 {casa} vs {trasf}</span>
-        <span style="color: #94a3b8; font-size: 0.95rem;">📅 {data} {ora}</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    pp = pr["p"]; chiave_g, testo_g, motivo_g = giocata_consigliata(pr, None); top = pr["pronostico"]; p_top = pp[top]
-    livello = "media"
-    if p_top >= SOGLIA_FIDUCIA_ALTA and not chiave_g.startswith(("1X", "X2")): livello = "alta"
-    elif chiave_g.startswith(("1X", "X2")): livello = "media"
-    elif p_top < SOGLIA_FIDUCIA_MEDIA: livello = "bassa"
-    senza_storico = casa not in modello["idx"] or trasf not in modello["idx"]
-    if senza_storico: livello = "media" if livello == "alta" else "bassa"
-    eq_1x2 = f"1 {pp['1']*100:.0f}% · X {pp['X']*100:.0f}% · 2 {pp['2']*100:.0f}%"
-    emoji = {"alta": "🟢", "media": "🟡", "bassa": "🔴"}[livello]
-    testo_alternativa = ""
-    if livello == "bassa" or "debole" in motivo_g:
-        alt_dc = pr["doppia_x_best"]; p_alt_dc = pp[alt_dc]
-        testo_alternativa = f"""
-**💡 Qual è l'alternativa?** 
-Dato che la favorita è debole, giocarla da sola è rischioso. Le alternative più solide sono:
-*   **{NOMI_SCELTA[alt_dc]} al {p_alt_dc*100:.1f}%**
-*   **X (Pareggio) al {pp['X']*100:.1f}%**
-*   **12 (Non pareggia) al {pp['12']*100:.1f}%**
-"""
-    st.success(f"""**{emoji} GIOCATA CONSIGLIATA: {NOMI_SCELTA[chiave_g]}**
-
-_{motivo_g}_
-
-**Probabilità 1X2:** {eq_1x2} — pronostico secco del modello: **{NOMI_ESITO[top]} ({p_top*100:.1f}%)**
-
-**Fiducia:** {livello.upper()}{" · ⚠ squadre senza storico" if senza_storico else ""}
-{testo_alternativa}""")
-
-    if st.button("🧮 Calcola Kelly per questa giocata"):
-        st.session_state["kelly_p"] = pp[chiave_g] * 100
-        st.session_state["kelly_q"] = round(1 / pp[chiave_g], 2)
-        st.success("Dati inviati alla scheda Kelly!")
-
-    st.markdown("#### 📈 Forma Recente (Ultime 5 partite)")
-    f_casa = ultimi_5_risultati(df_storico, casa); f_trasf = ultimi_5_risultati(df_storico, trasf)
-    def fmt_forma(lst):
-        return " ".join([f"<span style='background:{'#22c55e' if x=='V' else ('#eab308' if x=='N' else '#ef4444')}; color:white; padding:2px 6px; border-radius:4px; font-weight:bold;'>{x}</span>" for x in lst])
-    st.markdown(f"""
-    <div style="display: flex; justify-content: space-around; text-align: center; background: #111827; padding: 15px; border-radius: 10px;">
-        <div><b>{casa}</b><br>{fmt_forma(f_casa)}</div>
-        <div style="color: #64748b;">VS</div>
-        <div><b>{trasf}</b><br>{fmt_forma(f_trasf)}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    col_sq, col_st = st.columns([1.2, 1.8])
-    with col_sq:
-        st.markdown(f"""<div style="text-align: center; padding: 30px 20px; background: rgba(15,23,42,0.6); border-radius: 14px; border: 1px solid #1e293b;"><h2 style="color: {COL_CASA}; margin: 0; font-size: 1.4rem;">{casa}</h2><p style="color: #64748b; margin: 5px 0 20px 0; font-size: 0.85rem;">CASA</p><h3 style="color: {COL_ACCENTO}; margin: 0; font-size: 1.2rem;">VS</h3><h2 style="color: {COL_TRASF}; margin: 20px 0 0 0; font-size: 1.4rem;">{trasf}</h2><p style="color: #64748b; margin: 5px 0 0 0; font-size: 0.85rem;">TRASFERTA</p></div>""", unsafe_allow_html=True)
-    with col_st:
-        st.markdown("<p style='text-align: center; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px;'>STATISTICHE ATTESE</p>", unsafe_allow_html=True)
-        if is_intl or is_extra:
-            st.info("Statistiche dettagliate (Tiri, Corner) non disponibili per questa competizione.")
-        else:
-            righe_st = {"Gol Attesi": (round(lh, 2), round(la, 2))}; righe_st.update(stats_attese(df_storico, casa, trasf))
-            for label, (vc, vt) in righe_st.items():
-                st.markdown(f"""<div style="display: flex; justify-content: space-between; background: #111827; padding: 12px 18px; border-radius: 10px; border: 1px solid #1f2937; margin-bottom: 10px;"><span style="font-weight: 700; color: {COL_CASA}; width: 60px;">{vc}</span><span style="color: #94a3b8; text-align: center; flex-grow: 1;">{label}</span><span style="font-weight: 700; color: {COL_TRASF}; width: 60px; text-align: right;">{vt}</span></div>""", unsafe_allow_html=True)
-            st.markdown("#### 🕸️ Profilo delle due squadre")
-            st.plotly_chart(crea_radar_chart(casa, trasf, righe_st), use_container_width=True)
-
-    st.markdown(f"#### 📊 Mercati 1X2", unsafe_allow_html=True)
-    a1, a2, a3 = st.columns(3)
-    a1.metric("1 (Casa)", f"{mk['p1']*100:.1f}%", f"Quota equa: {1/mk['p1']:.2f}", delta_color="off")
-    a2.metric("X (Pareggio)", f"{mk['px']*100:.1f}%", f"Quota equa: {1/mk['px']:.2f}", delta_color="off")
-    a3.metric("2 (Trasferta)", f"{mk['p2']*100:.1f}%", f"Quota equa: {1/mk['p2']:.2f}", delta_color="off")
-
-    st.markdown(f"#### ⚽ Goal, Over, Under", unsafe_allow_html=True)
-    u1, u2, u3, u4, u5 = st.columns(5)
-    u1.metric("Over 2.5", f"{mg['over2.5']*100:.1f}%", f"Under: {(1-mg['over2.5'])*100:.1f}%", delta_color="off")
-    u2.metric("Over 1.5", f"{mg['over1.5']*100:.1f}%", f"Under: {(1-mg['over1.5'])*100:.1f}%", delta_color="off")
-    u3.metric("Over 3.5", f"{mg['over3.5']*100:.1f}%", f"Under: {(1-mg['over3.5'])*100:.1f}%", delta_color="off")
-    u4.metric("Goal (BTTS)", f"{mg['btts']*100:.1f}%", f"Quota: {1/mg['btts']:.2f}", delta_color="off")
-    u5.metric("No Goal", f"{(1-mg['btts'])*100:.1f}%", f"Quota: {1/(1-mg['btts']):.2f}", delta_color="off")
-
-    st.markdown(f"#### 🎰 Multigol", unsafe_allow_html=True)
-    c1, c2 = st.columns(2)
-    with c1:
-        st.metric("Multigol sopra media (3 gol)", f"{pr['multigol_best']} gol", f"{pr['multigol_best_p']*100:.1f}%" + (f" · media {pr['multigol_best_f']*100:.1f}%" if pr.get('multigol_best_f') else ""), delta_color="off")
-
-    st.markdown("#### 🎯 Heatmap Risultati Esatti Finali")
-    st.plotly_chart(crea_heatmap(M), use_container_width=True)
-
-    # ========== TEMPI (nuove sezioni) ==========
+def mostra(c, t, d, o):
+    D = distribuzione_live(c, t, mod, pesi, Mfreq, qf, mxg); lh, la = gol_attesi(D["M_gol"]); M = D["M_es"]; mk, mg = mercati(D["M_1x2"]), mercati(D["M_gol"]); pr = tabelle_pronostico(D["M_1x2"], D["M_gol"], fc)
+    st.markdown(f"<div style='background:#111827;padding:18px;border-radius:12px;margin-bottom:12px;display:flex;justify-content:space-between;'><b>{c} vs {t}</b><span>📅 {d} {o}</span></div>", unsafe_allow_html=True)
+    pp = pr["p"]; cg, _, _ = giocata_consigliata(pr); top = pr["pronostico"]
+    st.success(f"**🎯 GIOCATA: {NOMI_SCELTA[cg]}** — {pp[top]*100:.1f}%\n\n*{NOMI_ESITO[top]}*")
+    if st.button("🧮 Kelly"): st.session_state["kp"], st.session_state["kq"] = pp[cg]*100, round(1/pp[cg], 2)
+    
+    st.markdown(f"**Forma**\n{c}: {' '.join(ultimi_5(df_s, c))}\n{t}: {' '.join(ultimi_5(df_s, t))}")
+    a, b, x = st.columns(3); a.metric("1", f"{mk['p1']*100:.1f}%"); b.metric("X", f"{mk['px']*100:.1f}%"); x.metric("2", f"{mk['p2']*100:.1f}%")
+    
     st.markdown("---")
-    st.markdown("### ⏱️ Mercati dei Tempi")
-    tempi = tabelle_tempi_complete(d["M_gol"], df_storico)
-
-    if is_intl or is_extra:
-        st.info("Per questa competizione i dati sui tempi (HTHG/HTAG) non sono disponibili: le sezioni 1X2 per tempo, HT/FT, Over/Under per tempo e Multigol per tempo non sono calcolabili. Le stime userebbero una quota di gol nel 1° tempo di default (45%), quindi non sono affidabili e vengono nascoste.")
+    st.markdown("### ⏱️ Tempi")
+    if is_i or is_e: st.info("Dati tempi non disponibili per questa competizione.")
     else:
-        st.markdown(f"<p style='font-size:0.9rem;color:#94a3b8;'>Quota gol nel 1° tempo: {tempi['quote_pt'][0]*100:.0f}% (casa), {tempi['quote_pt'][1]*100:.0f}% (trasferta). Fonte: storico del campionato.</p>", unsafe_allow_html=True)
-
-        # 1X2 per tempo
-        st.markdown("#### ⚽ 1X2 per tempo")
+        T = tabelle_tempi_complete(D["M_gol"], df_s)
         col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**1° tempo**")
-            x1 = tempi["1x2_1t"]
-            b1, b2, b3 = st.columns(3)
-            b1.metric("1", f"{x1['1']*100:.1f}%", delta_color="off")
-            b2.metric("X", f"{x1['X']*100:.1f}%", delta_color="off")
-            b3.metric("2", f"{x1['2']*100:.1f}%", delta_color="off")
-        with col2:
-            st.markdown("**2° tempo**")
-            x2 = tempi["1x2_2t"]
-            c1_, c2_, c3_ = st.columns(3)
-            c1_.metric("1", f"{x2['1']*100:.1f}%", delta_color="off")
-            c2_.metric("X", f"{x2['X']*100:.1f}%", delta_color="off")
-            c3_.metric("2", f"{x2['2']*100:.1f}%", delta_color="off")
-
-        # HT/FT
-        st.markdown("#### 🕐 HT/FT (esito riposo – finale)")
-        htft = tempi["HTFT"]
-        righe_htft = []
-        segni = ["1", "X", "2"]
-        for i in range(3):
-            for j in range(3):
-                righe_htft.append({"Esito": f"{segni[i]}/{segni[j]}", "Probabilità %": round(htft[i, j] * 100, 1), "Quota equa": round(1 / max(htft[i, j], 1e-6), 2)})
-        df_htft = pd.DataFrame(righe_htft).sort_values("Probabilità %", ascending=False)
-        st.dataframe(df_htft, use_container_width=True, hide_index=True)
-
-        # Over/Under per tempo
-        st.markdown("#### 📈 Over/Under per tempo")
-        o1, o2 = st.columns(2)
-        with o1:
-            st.markdown("**1° tempo**")
-            for ln in (0.5, 1.5, 2.5):
-                po = tempi["ou_1t"][f"Over {ln}"]
-                st.metric(f"Over {ln}", f"{po*100:.1f}%", f"Under: {(1-po)*100:.1f}%", delta_color="off")
-        with o2:
-            st.markdown("**2° tempo**")
-            for ln in (0.5, 1.5, 2.5):
-                po = tempi["ou_2t"][f"Over {ln}"]
-                st.metric(f"Over {ln}", f"{po*100:.1f}%", f"Under: {(1-po)*100:.1f}%", delta_color="off")
-
-        # Multigol per tempo
-        st.markdown("#### 🎰 Multigol per tempo")
-        mg1, mg2 = st.columns(2)
-        with mg1:
-            st.markdown("**1° tempo**")
-            righe_mg1 = [{"Fascia": k, "Probabilità %": round(v * 100, 1)} for k, v in tempi["mg_1t"].items()]
-            st.dataframe(pd.DataFrame(righe_mg1), use_container_width=True, hide_index=True)
-        with mg2:
-            st.markdown("**2° tempo**")
-            righe_mg2 = [{"Fascia": k, "Probabilità %": round(v * 100, 1)} for k, v in tempi["mg_2t"].items()]
-            st.dataframe(pd.DataFrame(righe_mg2), use_container_width=True, hide_index=True)
-
-        # Risultati esatti per tempo (con sorpresa)
-        st.markdown("#### 🎯 Risultati esatti per tempo (con sorpresa)")
-        es_t = esatti_per_tempo(d["M_gol"], df_storico)
-        if es_t: st.dataframe(pd.DataFrame(es_t), use_container_width=True, hide_index=True)
-        else: st.info("Dati insufficienti per il calcolo dei risultati esatti per tempo.")
-
+        col1.markdown("**1T 1X2**"); col1.write(f"1: {T['1x2_1t']['1']*100:.1f}% | X: {T['1x2_1t']['X']*100:.1f}% | 2: {T['1x2_1t']['2']*100:.1f}%")
+        col2.markdown("**2T 1X2**"); col2.write(f"1: {T['1x2_2t']['1']*100:.1f}% | X: {T['1x2_2t']['X']*100:.1f}% | 2: {T['1x2_2t']['2']*100:.1f}%")
+        st.markdown("**HT/FT**"); st.dataframe(pd.DataFrame([{"Esito": f"{['1','X','2'][i]}/{['1','X','2'][j]}", "Prob %": round(T['HTFT'][i,j]*100, 1)} for i in range(3) for j in range(3)]).sort_values("Prob %", ascending=False))
+        st.markdown("**Over/Under 1T**"); st.write(f"O0.5: {T['ou_1t']['Over 0.5']*100:.1f}% | O1.5: {T['ou_1t']['Over 1.5']*100:.1f}% | O2.5: {T['ou_1t']['Over 2.5']*100:.1f}%")
+        st.markdown("**Over/Under 2T**"); st.write(f"O0.5: {T['ou_2t']['Over 0.5']*100:.1f}% | O1.5: {T['ou_2t']['Over 1.5']*100:.1f}% | O2.5: {T['ou_2t']['Over 2.5']*100:.1f}%")
+        st.markdown("**Esatti 1T/2T (sorpresa)**"); st.dataframe(pd.DataFrame(esatti_per_tempo(D["M_gol"], df_s)))
 
 with tabs[0]:
-    if calendario.empty:
-        st.info("Nessuna partita futura disponibile.")
-    else:
-        if "Giornata" not in calendario.columns: calendario["Giornata"] = 1
-        giornate = sorted(g for g in calendario["Giornata"].unique() if g)
-        if not giornate: giornate = [1]
-        non_giocate = calendario[calendario["Stato"] != "FINISHED"] if "Stato" in calendario.columns else calendario
-        g_def = int(non_giocate["Giornata"].min()) if not non_giocate.empty and non_giocate["Giornata"].min() else int(giornate[-1])
-        cc1, cc2 = st.columns(2)
-        cc1.selectbox("🏆 Torneo", [campionato], key="cal_torneo")
-        giornata_sel = cc2.selectbox("📅 Giornata", giornate, index=giornate.index(g_def) if g_def in giornate else 0, key="cal_giornata")
-        cal_filtrato = calendario[calendario["Giornata"] == giornata_sel]
-        for idx, row in cal_filtrato.iterrows():
-            gc = row["GolC"] if "GolC" in row and pd.notna(row["GolC"]) else "-"
-            gt = row["GolT"] if "GolT" in row and pd.notna(row["GolT"]) else "-"
-            gc = int(gc) if gc != "-" else gc; gt = int(gt) if gt != "-" else gt
-            st.markdown(f"""<div style="background: #111827; padding: 18px; border-radius: 12px; border: 1px solid #1f2937; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;"><div><span style="font-weight: 700; font-size: 1.05rem;">{row['Casa']}</span><span style="color: #94a3b8; margin: 0 8px;">vs</span><span style="font-weight: 700; font-size: 1.05rem;">{row['Trasferta']}</span><br><span style="color: #64748b; font-size: 12px;">📅 {row.get('Data', '')} {row.get('Ora', '')}</span></div><div style="text-align: right;"><span style="background: #1e293b; color: {COL_PRIMARIO}; padding: 6px 14px; border-radius: 8px; font-weight: 700; font-size: 1.1rem;">{gc} - {gt}</span></div></div>""", unsafe_allow_html=True)
-            if st.button("📊 Analizza Match", key=f"btn_{div}_{idx}"):
-                st.session_state["match_attivo"] = {"div": div, "casa": row["Casa"], "trasf": row["Trasferta"], "data": row.get("Data", ""), "ora": row.get("Ora", "")}
-        att_m = st.session_state.get("match_attivo")
-        if att_m and att_m.get("div") == div: mostra_analisi(att_m["casa"], att_m["trasf"], att_m["data"], att_m["ora"])
-
-    st.markdown("---")
-    st.markdown("### 🔮 Analisi Manuale")
-    squadre_m = sorted(set(df_storico["HomeTeam"]) | set(df_storico["AwayTeam"]))
-    m1, m2 = st.columns(2)
-    sq_c = m1.selectbox("Casa", squadre_m, key="man_casa")
-    sq_t = m2.selectbox("Trasferta", [s for s in squadre_m if s != sq_c], key="man_trasf")
-    if st.button("📊 Analizza Partita Manuale", key="btn_man"): mostra_analisi(sq_c, sq_t, "Oggi", "")
+    if not cal.empty:
+        if "Giornata" not in cal.columns: cal["Giornata"] = 1
+        gs = sorted(cal["Giornata"].unique()); gsel = st.selectbox("Giornata", gs)
+        for i, r in cal[cal["Giornata"] == gsel].iterrows():
+            st.markdown(f"**{r['Casa']} vs {r['Trasferta']}** ({r.get('Data','')})")
+            if st.button("Analizza", key=f"btn_{i}"): st.session_state["m"] = r
+    if "m" in st.session_state: mostra(st.session_state["m"]["Casa"], st.session_state["m"]["Trasferta"], st.session_state["m"]["Data"], st.session_state["m"].get("Ora", ""))
 
 with tabs[1]:
-    st.subheader("📋 Multipla Builder & Pronostici")
-    righe_p = []
-    for _, riga in calendario.iterrows():
-        if "Data" not in riga or not riga["Data"]: continue
-        c_, t_ = riga["Casa"], riga["Trasferta"]
-        d_ = distribuzione_live(c_, t_, modello, pesi, M_freq_live, quote_fixtures, modello_xg)
-        prp = tabelle_pronostico(d_["M_1x2"], d_["M_gol"], None, None)
-        pp_ = prp["p"]; chiave_g, testo_g, motivo_g = giocata_consigliata(prp, None)
-        quota_equa = round(1 / pp_[chiave_g], 2) if pp_[chiave_g] > 0 else 0
-        righe_p.append({"Seleziona": False, "Data": riga["Data"], "Partita": f"{c_} - {t_}", "🎯 Giocata": NOMI_SCELTA[chiave_g], "Probabilità %": round(pp_[chiave_g]*100, 1), "Quota Equa": quota_equa})
-    if not righe_p: st.info("Nessuna partita futura nel calendario.")
-    else:
-        df_p = pd.DataFrame(righe_p)
-        edited_df = st.data_editor(df_p, column_config={"Seleziona": st.column_config.CheckboxColumn("Aggiungi", default=False), "Probabilità %": st.column_config.NumberColumn(format="%.1f%%")}, disabled=["Data", "Partita", "🎯 Giocata", "Probabilità %", "Quota Equa"], hide_index=True, use_container_width=True)
-        selected = edited_df[edited_df["Seleziona"] == True]
-        if not selected.empty:
-            st.markdown("---")
-            prob_comb = np.prod(selected["Probabilità %"] / 100); quota_tot = np.prod(selected["Quota Equa"]); ev = (prob_comb * quota_tot - 1) * 100
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Quota Totale", f"{quota_tot:.2f}"); m2.metric("Probabilità Combinata", f"{prob_comb*100:.2f}%"); m3.metric("Valore Atteso (EV)", f"{ev:+.1f}%")
+    rp = []
+    for _, r in cal.iterrows():
+        D = distribuzione_live(r["Casa"], r["Trasferta"], mod, pesi, Mfreq, qf, mxg); p = tabelle_pronostico(D["M_1x2"], D["M_gol"], fc); cg, _, _ = giocata_consigliata(p)
+        rp.append({"Sel": False, "Data": r["Data"], "Partita": f"{r['Casa']}-{r['Trasferta']}", "Giocata": NOMI_SCELTA[cg], "Prob %": round(p["p"][cg]*100, 1), "Quota Equa": round(1/p["p"][cg], 2)})
+    if rp:
+        ed = st.data_editor(pd.DataFrame(rp), column_config={"Sel": st.column_config.CheckboxColumn(default=False)}, disabled=["Data","Partita","Giocata","Prob %","Quota Equa"])
+        sel = ed[ed["Sel"]]
+        if not sel.empty:
+            st.metric("Quota Totale", f"{np.prod(sel['Quota Equa']):.2f}"); st.metric("Prob Combinata", f"{np.prod(sel['Prob %']/100)*100:.2f}%")
 
 with tabs[2]:
-    st.subheader("🏆 Classifica")
-    df_cls = tabella_classifica(df_storico[df_storico["Stag"] == df_storico["Stag"].max()])
-    if not df_cls.empty: st.dataframe(df_cls, use_container_width=True, hide_index=True)
+    if not is_i and not is_e: st.dataframe(tabella_classifica(df_s[df_s["Stag"] == df_s["Stag"].max()]))
 
 with tabs[3]:
-    st.subheader("⚡ Scanner Value Finder")
-    if not quote_fixtures: st.info("Nessuna quota disponibile tramite The Odds API.")
-    else:
-        edge_min = st.slider("Edge Minimo (%)", 0.0, 25.0, 3.0)
-        righe_v = []
-        for (casa, trasf), q in quote_fixtures.items():
-            lh, la = lambda_partita(modello, casa, trasf)
-            M_classico = matrice_punteggi(lh, la, modello["rho"])
-            if modello_xg is not None:
-                lh_xg, la_xg = lambda_partita(modello_xg, casa, trasf)
-                M_xg = matrice_punteggi(lh_xg, la_xg, modello_xg["rho"])
-                M_comb = combina_modelli(M_classico, M_xg, 0.5)
-            else:
-                M_comb = M_classico
-            mk = mercati(M_comb)
-            P = np.array([mk["p1"], mk["px"], mk["p2"]]); pm = senza_margine(q)
-            nomi = [f"1 ({casa})", "X (Pareggio)", f"2 ({trasf})"]
-            for k in range(3):
-                edge = (P[k] * q[k] - 1) * 100
-                if edge >= edge_min:
-                    righe_v.append({"Partita": f"{casa} vs {trasf}", "Selezione": nomi[k], "Prob_Modello": round(P[k] * 100, 1), "Prob_Mercato": round(pm[k] * 100, 1), "Quota_Book": round(q[k], 2), "Edge": round(edge, 1)})
-        if righe_v:
-            df_val = pd.DataFrame(righe_v).sort_values("Edge", ascending=False)
-            st.dataframe(df_val, use_container_width=True, hide_index=True)
-        else: st.info("Nessuna selezione con questi filtri.")
+    rv = []
+    for (c, t), q in qf.items():
+        mk = mercati(matrice_punteggi(*lambda_partita(mod, c, t), mod["rho"])); P = np.array([mk["p1"], mk["px"], mk["p2"]]); pm = senza_margine(q)
+        for k in range(3):
+            e = (P[k]*q[k]-1)*100
+            if e >= 3: rv.append({"Partita": f"{c}-{t}", "Sel": ["1","X","2"][k], "Prob": round(P[k]*100,1), "Quota": round(q[k],2), "Edge": round(e,1)})
+    if rv: df_val = pd.DataFrame(rv).sort_values("Edge", ascending=False); st.dataframe(df_val)
 
 with tabs[4]:
-    st.subheader("🌍 Top Picks (Tutti i Campionati)")
-    st.markdown("Scansiona in parallelo tutti i campionati con quote disponibili. Attenzione: consuma 1 richiesta per campionato su The Odds API.")
-    edge_min_top = st.slider("Edge Minimo (%)", 0.0, 25.0, 3.0, key="edge_top")
-    if st.button("🚀 Scansiona tutti i campionati"):
-        tutti_picks = []
-        campionati_da_scansionare = list(LEAGUES.keys()) + list(EXTRA_LEAGUES.keys()) + list(INTL_COMPS.keys())
-        progresso = st.progress(0.0)
-        for i, camp in enumerate(campionati_da_scansionare):
-            progresso.progress((i + 1) / len(campionati_da_scansionare))
-            if camp in LEAGUES:
-                d_code = LEAGUES[camp]; o_key = None
-                for dc, ok in ODDS_API_KEYS.items():
-                    pass
-                if d_code in ODDS_API_KEYS: o_key = ODDS_API_KEYS[d_code]
-                elif camp in INTL_COMPS: o_key = INTL_COMPS[camp]["odds_key"]
-                else:
-                    # mappatura manuale per i principali
-                    mappatura_main = {"I1": "soccer_italy_serie_a", "E0": "soccer_epl", "SP1": "soccer_spain_la_liga", "D1": "soccer_germany_bundesliga", "F1": "soccer_france_ligue_one", "N1": "soccer_netherlands_eredivisie", "P1": "soccer_portugal_primeira_liga", "E1": "soccer_efl_champ", "B1": "soccer_belgium_first_div", "T1": "soccer_turkey_super_league"}
-                    o_key = mappatura_main.get(d_code)
-            elif camp in EXTRA_LEAGUES:
-                d_code = EXTRA_LEAGUES[camp]; o_key = ODDS_API_KEYS.get(d_code)
-            else:
-                d_code = camp; o_key = INTL_COMPS[camp]["odds_key"]
-            if not o_key: continue
-            q_raw = carica_odds_api(chiave_odds, o_key)
-            if not q_raw: continue
-            df_s = carica_storico(d_code, N_STAGIONI, giorno)
-            if df_s is None or len(df_s) < 50: continue
-            mod_s = adatta_modello(df_s, pd.Timestamp.now().normalize(), 2.0, 365, True)
-            sq_mod = sorted(set(df_s["HomeTeam"]) | set(df_s["AwayTeam"]))
-            all_t = set([k[0] for k in q_raw.keys()] + [k[1] for k in q_raw.keys()])
-            mp = mappa_nomi(list(all_t), sq_mod)
-            for (h, a), q in q_raw.items():
-                mh, ma = mp.get(h, h), mp.get(a, a)
-                if mh not in sq_mod or ma not in sq_mod: continue
-                lh, la = lambda_partita(mod_s, mh, ma)
-                mk = mercati(matrice_punteggi(lh, la, mod_s["rho"]))
-                P = np.array([mk["p1"], mk["px"], mk["p2"]])
+    if st.button("Scansiona"):
+        tp = []
+        for cp in list(LEAGUES.keys()) + list(EXTRA_LEAGUES.keys()):
+            dc = LEAGUES.get(cp) or EXTRA_LEAGUES.get(cp); ok = ODDS_API_KEYS.get(dc) or "soccer_italy_serie_a" if dc=="I1" else None
+            qr = carica_odds_api(k_od, ok) if ok else {}
+            for (h, a), q in qr.items():
+                df_sm = carica_storico(dc, N_STAGIONI, giorno)
+                if df_sm is None: continue
+                msm = adatta_modello(df_sm, pd.Timestamp.now().normalize(), 2.0, 365)
+                mk = mercati(matrice_punteggi(*lambda_partita(msm, h, a), msm["rho"])); P = np.array([mk["p1"], mk["px"], mk["p2"]])
                 for k in range(3):
-                    edge = (P[k] * q[k] - 1) * 100
-                    if edge >= edge_min_top:
-                        tutti_picks.append({"Campionato": camp, "Partita": f"{mh} vs {ma}", "Selezione": ["1", "X", "2"][k], "Prob_Modello": round(P[k] * 100, 1), "Quota_Book": round(q[k], 2), "Edge": round(edge, 1)})
-        progresso.empty()
-        if tutti_picks:
-            st.dataframe(pd.DataFrame(tutti_picks).sort_values("Edge", ascending=False), use_container_width=True, hide_index=True)
-        else:
-            st.info("Nessuna opportunità trovata con questi filtri.")
+                    e = (P[k]*q[k]-1)*100
+                    if e >= 3: tp.append({"Campionato": cp, "Partita": f"{h}-{a}", "Edge": round(e,1)})
+        if tp: st.dataframe(pd.DataFrame(tp).sort_values("Edge", ascending=False))
 
 with tabs[5]:
-    st.subheader("🎲 Simulatore Monte Carlo Bankroll")
-    if "df_val" not in locals() or df_val is None or df_val.empty:
-        st.info("Serve il Value Finder con quote reali. Vai nella scheda Value Finder.")
-    else:
-        c1, c2, c3 = st.columns(3)
-        bankroll_iniziale = c1.number_input("Bankroll Iniziale (€)", 100.0, 10000.0, 1000.0, step=100.0)
-        stake = c2.number_input("Stake per giocata (€)", 1.0, 500.0, 20.0, step=5.0)
-        n_bets = c3.slider("Numero di scommesse", 10, 500, 100, step=10)
-        if st.button("🚀 Simula"):
-            probs = df_val["Prob_Modello"].values / 100
-            odds = df_val["Quota_Book"].values
-            percorsi = simula_montecarlo(bankroll_iniziale, stake, n_bets, probs, odds)
-            finali = percorsi[:, -1]
-            media_finale = np.mean(finali)
-            perc_rovina = np.mean(finali <= 0) * 100
-            m1, m2 = st.columns(2)
-            m1.metric("Bankroll Medio Finale", f"€{media_finale:.2f}")
-            m2.metric("Probabilità di Rovina", f"{perc_rovina:.1f}%", "bassa" if perc_rovina < 5 else "alta", delta_color="off")
-            fig = go.Figure()
-            for i in range(100):
-                fig.add_trace(go.Scatter(x=np.arange(n_bets+1), y=percorsi[i], mode='lines', line=dict(width=1, color='#38bdf8'), opacity=0.1, showlegend=False))
-            fig.add_trace(go.Scatter(x=np.arange(n_bets+1), y=np.mean(percorsi, axis=0), mode='lines', line=dict(width=3, color='#f43f5e'), name='Media'))
-            fig.add_hline(y=bankroll_iniziale, line_dash="dash", line_color="#64748b", annotation_text="Bankroll Iniziale")
-            fig.add_hline(y=0, line_dash="dash", line_color="#ef4444", annotation_text="Rovina")
-            fig.update_layout(title="Simulazione Monte Carlo: 100 Percorsi", xaxis_title="Numero di s
+    if "df_val" in locals() and not df_val.empty:
+        st.metric("Bank", "€1000")
+        if st.button("Simula"):
+            P = simula_mc(1000, 20, 100, df_val["Prob"].values/100, df_val["Quota"].values)
+            fig = go.Figure(go.Scatter(x=np.arange(101), y=P.mean(axis=0), line=dict(color='red')))
+            for i in range(100): fig.add_trace(go.Scatter(x=np.arange(101), y=P[i], line=dict(color='blue', width=1), opacity=0.1, showlegend=False))
+            st.plotly_chart(fig)
+
+with tabs[6]:
+    if "df_val" in locals() and not df_val.empty:
+        st.download_button("Scarica CSV", df_val.to_csv(index=False), "report.csv")
+
+with tabs[7]:
+    p = st.slider("Prob %", 1, 100, int(st.session_state.get("kp", 45))); q = st.number_input("Quota", 1.01, 50.0, float(st.session_state.get("kq", 2.0))); b = 1000.0
+    st.metric("Kelly", f"€{max(0, ((q-1)*(p/100) - (1-p/100)) / (q-1)) * 0.25 * b:.2f}")
