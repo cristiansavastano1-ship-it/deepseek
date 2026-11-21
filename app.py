@@ -456,6 +456,22 @@ def esatti_per_tempo(M, df, quanti=4):
         righe.append(riga)
     return righe
 
+def stats_attese(df, c, t, k=5):
+    out = {}
+    for n, (h, a) in STAT_COLONNE.items():
+        if h not in df.columns or a not in df.columns: continue
+        d = df.dropna(subset=[h, a])
+        if d.empty: continue
+        lh, la = d[h].mean(), d[a].mean(); sm = lambda s, l: (s.sum() + k*l) / (len(s) + k)
+        dc, dt = d[d["HomeTeam"] == c], d[d["AwayTeam"] == t]
+        out[n] = (round((sm(dc[h], lh) + sm(dt[h], lh))/2, 1), round((sm(dt[a], la) + sm(dc[a], la))/2, 1))
+    return out
+
+def crea_radar_chart(c, t, r):
+    cats = list(r.keys()); vc, vt = [round(r[x][0]/max(r[x][0], r[x][1], 0.1)*100, 1) for x in cats], [round(r[x][1]/max(r[x][0], r[x][1], 0.1)*100, 1) for x in cats]
+    fig = go.Figure([go.Scatterpolar(r=vc+[vc[0]], theta=cats+[cats[0]], fill='toself', name=c, line=dict(color=COL_CASA)), go.Scatterpolar(r=vt+[vt[0]], theta=cats+[cats[0]], fill='toself', name=t, line=dict(color=COL_TRASF))])
+    fig.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 100])), template="plotly_dark", height=400, margin=dict(l=40, r=40, t=40, b=20)); return fig
+
 def ultimi_5(df, sq):
     d = df[(df["HomeTeam"] == sq) | (df["AwayTeam"] == sq)].sort_values("Date").tail(5)
     return ["V" if (r.HomeTeam == sq and r.FTHG > r.FTAG) or (r.AwayTeam == sq and r.FTAG > r.FTHG) else ("N" if r.FTHG == r.FTAG else "P") for r in d.itertuples()]
@@ -546,7 +562,6 @@ elif not is_e:
 
 Mfreq = matrice_frequenze(df_s); fc = frequenze_combo(df_s)
 
-# ===== SCHEDINA GLOBALE MULTI-CAMPIONATO =====
 def schedina_globale(data_target, giorno, k_fd, k_od):
     risultati = []
     for nome, code in LEAGUES.items():
@@ -599,13 +614,67 @@ tabs = st.tabs(["📅 Calendario", "📋 Pronostici", "🏆 Classifica", "⚡ Va
 
 def mostra(c, t, d, o):
     D = distribuzione_live(c, t, mod, {"gol":0.5,"esatto":0.75}, Mfreq, qf, mxg); lh, la = gol_attesi(D["M_gol"]); M = D["M_es"]; mk, mg = mercati(D["M_1x2"]), mercati(D["M_gol"]); pr = tabelle_pronostico(D["M_1x2"], D["M_gol"], fc)
-    st.markdown(f"<div style='background:#111827;padding:18px;border-radius:12px;margin-bottom:12px;display:flex;justify-content:space-between;'><b>{c} vs {t}</b><span>📅 {d} {o}</span></div>", unsafe_allow_html=True)
-    pp = pr["p"]; cg, _, _ = giocata_consigliata(pr); top = pr["pronostico"]
-    st.success(f"**🎯 GIOCATA: {NOMI_SCELTA[cg]}** — {pp[top]*100:.1f}%\n\n*{NOMI_ESITO[top]}*")
-    if st.button("🧮 Kelly"): st.session_state["kp"], st.session_state["kq"] = pp[cg]*100, round(1/pp[cg], 2)
-    st.markdown(f"**Forma**\n{c}: {' '.join(ultimi_5(df_s, c))}\n{t}: {' '.join(ultimi_5(df_s, t))}")
-    a, b, x = st.columns(3); a.metric("1", f"{mk['p1']*100:.1f}%"); b.metric("X", f"{mk['px']*100:.1f}%"); x.metric("2", f"{mk['p2']*100:.1f}%")
-    st.markdown("---"); st.markdown("### ⏱️ Tempi")
+    st.markdown(f"<div style='background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); border: 1px solid #312e81; border-radius: 20px; padding: 18px 25px; margin-top: 20px; display: flex; justify-content: space-between; align-items: center;'><span style='font-weight: 800; font-size: 1.2rem; color: #f8fafc;'>📋 {c} vs {t}</span><span style='color: #94a3b8; font-size: 0.95rem;'>📅 {d} {o}</span></div>", unsafe_allow_html=True)
+    pp = pr["p"]; cg, testo_g, motivo_g = giocata_consigliata(pr); top = pr["pronostico"]; p_top = pp[top]
+    livello = "media"
+    if p_top >= SOGLIA_FIDUCIA_ALTA and not cg.startswith(("1X", "X2")): livello = "alta"
+    elif cg.startswith(("1X", "X2")): livello = "media"
+    elif p_top < SOGLIA_FIDUCIA_MEDIA: livello = "bassa"
+    senza_storico = c not in mod["idx"] or t not in mod["idx"]
+    if senza_storico: livello = "media" if livello == "alta" else "bassa"
+    
+    eq_1x2 = f"1 {pp['1']*100:.0f}% · X {pp['X']*100:.0f}% · 2 {pp['2']*100:.0f}%"
+    emoji = {"alta": "🟢", "media": "🟡", "bassa": "🔴"}[livello]
+    testo_alternativa = ""
+    if livello == "bassa" or "debole" in motivo_g:
+        alt_dc = pr["doppia_x_best"]; p_alt_dc = pp[alt_dc]
+        testo_alternativa = f"\n**💡 Qual è l'alternativa?**\nDato che la favorita è debole, giocarla da sola è rischioso. Le alternative più solide sono:\n*   **{NOMI_SCELTA[alt_dc]} al {p_alt_dc*100:.1f}%**\n*   **X (Pareggio) al {pp['X']*100:.1f}%**\n*   **12 (Non pareggia) al {pp['12']*100:.1f}%**"
+    st.success(f"""**{emoji} GIOCATA CONSIGLIATA: {NOMI_SCELTA[cg]}**\n\n_{motivo_g}_\n\n**Probabilità 1X2:** {eq_1x2} — pronostico secco: **{NOMI_ESITO[top]} ({p_top*100:.1f}%)**\n\n**Fiducia:** {livello.upper()}{" · ⚠ squadre senza storico" if senza_storico else ""}\n{testo_alternativa}""")
+    if st.button("🧮 Calcola Kelly per questa giocata"):
+        st.session_state["kelly_p"] = pp[cg] * 100; st.session_state["kelly_q"] = round(1 / pp[cg], 2); st.success("Dati inviati alla scheda Kelly!")
+    
+    st.markdown("#### 📈 Forma Recente (Ultime 5 partite)")
+    f_casa = ultimi_5(df_s, c); f_trasf = ultimi_5(df_s, t)
+    def fmt_forma(lst): return " ".join([f"<span style='background:{'#22c55e' if x=='V' else ('#eab308' if x=='N' else '#ef4444')}; color:white; padding:2px 6px; border-radius:4px; font-weight:bold;'>{x}</span>" for x in lst])
+    st.markdown(f"<div style='display: flex; justify-content: space-around; text-align: center; background: #111827; padding: 15px; border-radius: 10px;'><div><b>{c}</b><br>{fmt_forma(f_casa)}</div><div style='color: #64748b;'>VS</div><div><b>{t}</b><br>{fmt_forma(f_trasf)}</div></div>", unsafe_allow_html=True)
+
+    col_sq, col_st = st.columns([1.2, 1.8])
+    with col_sq:
+        st.markdown(f"<div style='text-align: center; padding: 30px 20px; background: rgba(15,23,42,0.6); border-radius: 14px; border: 1px solid #1e293b;'><h2 style='color: {COL_CASA}; margin: 0; font-size: 1.4rem;'>{c}</h2><p style='color: #64748b; margin: 5px 0 20px 0; font-size: 0.85rem;'>CASA</p><h3 style='color: {COL_ACCENTO}; margin: 0; font-size: 1.2rem;'>VS</h3><h2 style='color: {COL_TRASF}; margin: 20px 0 0 0; font-size: 1.4rem;'>{t}</h2><p style='color: #64748b; margin: 5px 0 0 0; font-size: 0.85rem;'>TRASFERTA</p></div>", unsafe_allow_html=True)
+    with col_st:
+        st.markdown("<p style='text-align: center; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px;'>STATISTICHE ATTESE</p>", unsafe_allow_html=True)
+        if is_i or is_e: st.info("Statistiche dettagliate (Tiri, Corner) non disponibili per questa competizione.")
+        else:
+            righe_st = {"Gol Attesi": (round(lh, 2), round(la, 2))}; righe_st.update(stats_attese(df_s, c, t))
+            for label, (vc, vt) in righe_st.items():
+                st.markdown(f"<div style='display: flex; justify-content: space-between; background: #111827; padding: 12px 18px; border-radius: 10px; border: 1px solid #1f2937; margin-bottom: 10px;'><span style='font-weight: 700; color: {COL_CASA}; width: 60px;'>{vc}</span><span style='color: #94a3b8; text-align: center; flex-grow: 1;'>{label}</span><span style='font-weight: 700; color: {COL_TRASF}; width: 60px; text-align: right;'>{vt}</span></div>", unsafe_allow_html=True)
+            st.markdown("#### 🕸️ Profilo delle due squadre")
+            st.plotly_chart(crea_radar_chart(c, t, righe_st), use_container_width=True)
+
+    st.markdown(f"#### 📊 Mercati 1X2", unsafe_allow_html=True)
+    a1, a2, a3 = st.columns(3)
+    a1.metric("1 (Casa)", f"{mk['p1']*100:.1f}%", f"Quota equa: {1/mk['p1']:.2f}", delta_color="off")
+    a2.metric("X (Pareggio)", f"{mk['px']*100:.1f}%", f"Quota equa: {1/mk['px']:.2f}", delta_color="off")
+    a3.metric("2 (Trasferta)", f"{mk['p2']*100:.1f}%", f"Quota equa: {1/mk['p2']:.2f}", delta_color="off")
+
+    st.markdown(f"#### ⚽ Goal, Over, Under", unsafe_allow_html=True)
+    u1, u2, u3, u4, u5 = st.columns(5)
+    u1.metric("Over 2.5", f"{mg['over2.5']*100:.1f}%", f"Under: {(1-mg['over2.5'])*100:.1f}%", delta_color="off")
+    u2.metric("Over 1.5", f"{mg['over1.5']*100:.1f}%", f"Under: {(1-mg['over1.5'])*100:.1f}%", delta_color="off")
+    u3.metric("Over 3.5", f"{mg['over3.5']*100:.1f}%", f"Under: {(1-mg['over3.5'])*100:.1f}%", delta_color="off")
+    u4.metric("Goal (BTTS)", f"{mg['btts']*100:.1f}%", f"Quota: {1/mg['btts']:.2f}", delta_color="off")
+    u5.metric("No Goal", f"{(1-mg['btts'])*100:.1f}%", f"Quota: {1/(1-mg['btts']):.2f}", delta_color="off")
+
+    st.markdown(f"#### 🎰 Multigol", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("Multigol sopra media (3 gol)", f"{pr['multigol_best']} gol", f"{pr['multigol_best_p']*100:.1f}%" + (f" · media {pr['multigol_best_f']*100:.1f}%" if pr.get('multigol_best_f') else ""), delta_color="off")
+
+    st.markdown("#### 🎯 Heatmap Risultati Esatti Finali")
+    st.plotly_chart(crea_heatmap(M), use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("### ⏱️ Mercati dei Tempi")
     if is_i or is_e: st.info("Dati tempi non disponibili.")
     else:
         T = tabelle_tempi_complete(D["M_gol"], df_s)
@@ -615,7 +684,7 @@ def mostra(c, t, d, o):
         st.markdown("**HT/FT**"); st.dataframe(pd.DataFrame([{"Esito": f"{['1','X','2'][i]}/{['1','X','2'][j]}", "Prob %": round(T['HTFT'][i,j]*100, 1)} for i in range(3) for j in range(3)]).sort_values("Prob %", ascending=False))
         st.markdown("**Over/Under 1T**"); st.write(f"O0.5: {T['ou_1t']['Over 0.5']*100:.1f}% | O1.5: {T['ou_1t']['Over 1.5']*100:.1f}% | O2.5: {T['ou_1t']['Over 2.5']*100:.1f}%")
         st.markdown("**Over/Under 2T**"); st.write(f"O0.5: {T['ou_2t']['Over 0.5']*100:.1f}% | O1.5: {T['ou_2t']['Over 1.5']*100:.1f}% | O2.5: {T['ou_2t']['Over 2.5']*100:.1f}%")
-        st.markdown("**Esatti 1T/2T (sorpresa)**"); st.dataframe(pd.DataFrame(esatti_per_tempo(D["M_gol"], df_s)))
+        st.markdown("**Esatti 1T/2T**"); st.dataframe(pd.DataFrame(esatti_per_tempo(D["M_gol"], df_s)))
 
 with tabs[0]:
     if not cal.empty:
@@ -689,29 +758,25 @@ with tabs[7]:
 
 with tabs[8]:
     st.subheader("🎯 Schedina Globale per Data")
-    st.markdown("Trova **tutte le giocate consigliate** per una data specifica, in **tutti i campionati** supportati (principali + extra + internazionali).")
+    st.markdown("Trova **tutte le giocate consigliate** per una data specifica, in **tutti i campionati** supportati.")
     data_sel = st.date_input("Data della schedina", value=date.today() + pd.Timedelta(days=1))
     data_str = data_sel.strftime("%Y-%m-%d")
     tipi_f = st.multiselect("Tipi di campionato", ["Principale", "Extra", "Internazionale"], default=["Principale", "Extra", "Internazionale"])
-    if st.button("🔍 Cerca in tutti i campionati", key="btn_scan_glob"):
-        with st.spinner(f"Scansiono tutti i campionati per il {data_str}... (30-60 secondi la prima volta)"):
+    if st.button("🔍 Cerca in tutti i campionati"):
+        with st.spinner(f"Scansiono tutti i campionati per il {data_str}..."):
             df_g = schedina_globale(data_str, giorno, k_fd, k_od)
-        if df_g.empty:
-            st.warning(f"Nessuna partita trovata per il {data_str}. Prova un'altra data o verifica le chiavi API.")
+        if df_g.empty: st.warning(f"Nessuna partita trovata per il {data_str}.")
         else:
             df_g = df_g[df_g["Tipo"].isin(tipi_f)].sort_values("Prob %", ascending=False).reset_index(drop=True)
             st.success(f"📊 Trovate **{len(df_g)} partite** per il {data_str}")
-            prob_min_g = st.slider("Probabilità minima (%)", 0, 100, 0, key="prob_min_glob")
-            df_f = df_g[df_g["Prob %"] >= prob_min_g].copy()
-            df_f.insert(0, "Sel", False)
+            prob_min_g = st.slider("Probabilità minima (%)", 0, 100, 0)
+            df_f = df_g[df_g["Prob %"] >= prob_min_g].copy(); df_f.insert(0, "Sel", False)
             ed = st.data_editor(df_f, column_config={"Sel": st.column_config.CheckboxColumn(default=False), "Prob %": st.column_config.NumberColumn(format="%.1f%%")}, disabled=[c for c in df_f.columns if c != "Sel"], hide_index=True, use_container_width=True)
             sel = ed[ed["Sel"]]
             if not sel.empty:
                 st.markdown("---")
-                prob_comb = np.prod(sel["Prob %"] / 100)
-                quota_tot = np.prod(sel["Quota Equa"].fillna(2.0))
+                prob_comb = np.prod(sel["Prob %"] / 100); quota_tot = np.prod(sel["Quota Equa"].fillna(2.0))
                 m1, m2 = st.columns(2)
-                m1.metric("Quota Totale", f"{quota_tot:.2f}")
-                m2.metric("Probabilità Combinata", f"{prob_comb*100:.2f}%")
-                if len(sel) > 3: st.warning("⚠️ Multipla con molti eventi: la varianza è molto alta. Gioca responsabilmente.")
+                m1.metric("Quota Totale", f"{quota_tot:.2f}"); m2.metric("Probabilità Combinata", f"{prob_comb*100:.2f}%")
+                if len(sel) > 3: st.warning("⚠️ Multipla con molti eventi: la varianza è molto alta.")
                 st.dataframe(sel[["Campionato", "Partita", "Giocata", "Prob %", "Quota Equa"]], use_container_width=True, hide_index=True)
