@@ -11,12 +11,11 @@ from scipy.optimize import minimize, minimize_scalar
 from scipy.special import gammaln
 from scipy.stats import binom
 
-st.set_page_config(page_title="Combo Master 5.1", layout="wide", page_icon="⚽")
+st.set_page_config(page_title="Combo Master 5.2", layout="wide", page_icon="⚽")
 
 LEAGUES = {"Serie A (Italia)": "I1", "Premier League (Inghilterra)": "E0", "La Liga (Spagna)": "SP1", "Bundesliga (Germania)": "D1", "Ligue 1 (Francia)": "F1", "Eredivisie (Olanda)": "N1", "Primeira Liga (Portogallo)": "P1", "Championship (Inghilterra)": "E1", "Jupiler Pro League (Belgio)": "B1", "Super Lig (Turchia)": "T1"}
 LEAGUES_XG = {"I1", "E0", "SP1", "D1", "F1"}
 EXTRA_LEAGUES = {"Brasile (Serie A)": "BRA", "Argentina (Primera)": "ARG", "USA (MLS)": "USA", "Messico (Liga MX)": "MEX", "Giappone (J1)": "JPN", "Cina (Super League)": "CHN", "Danimarca (Superliga)": "DNK", "Finlandia (Veikkausliiga)": "FIN", "Irlanda (Premier Division)": "IRL", "Norvegia (Eliteserien)": "NOR", "Polonia (Ekstraklasa)": "POL", "Romania (Liga I)": "ROU", "Russia (Premier League)": "RUS", "Svezia (Allsvenskan)": "SWE", "Svizzera (Super League)": "SWZ", "Austria (Bundesliga)": "AUT"}
-
 ODDS_API_MAIN = {"I1": "soccer_italy_serie_a", "E0": "soccer_epl", "SP1": "soccer_spain_la_liga", "D1": "soccer_germany_bundesliga", "F1": "soccer_france_ligue_one", "N1": "soccer_netherlands_eredivisie", "P1": "soccer_portugal_primeira_liga", "E1": "soccer_efl_champ", "B1": "soccer_belgium_first_div", "T1": "soccer_turkey_super_league"}
 ODDS_API_KEYS = {"BRA": "soccer_brazil_campeonato", "ARG": "soccer_argentina_primera_division", "USA": "soccer_usa_mls", "MEX": "soccer_mexico_ligamx", "JPN": "soccer_japan_j_league", "CHN": "soccer_china_superleague", "DNK": "soccer_denmark_superliga", "FIN": "soccer_finland_veikkausliiga", "IRL": "soccer_ireland_premier_division", "NOR": "soccer_norway_eliteserien", "POL": "soccer_poland_ekstraklasa", "ROU": "soccer_romania_liga_1", "RUS": "soccer_russia_premier_league", "SWE": "soccer_sweden_allsvenskan", "SWZ": "soccer_switzerland_superleague", "AUT": "soccer_austria_bundesliga"}
 API_CODICI = {"I1": "SA", "E0": "PL", "SP1": "PD", "D1": "BL1", "F1": "FL1", "N1": "DED", "P1": "PPL", "E1": "ELC", "B1": "JPL", "T1": "TSL"}
@@ -27,13 +26,9 @@ UA = {"User-Agent": "Mozilla/5.0"}
 TIMEOUT = 20
 N_STAGIONI, N_STAGIONI_TEST = 3, 8
 RIDGE_GRID, HALFLIFE_GRID = (0.5, 2.0, 6.0), (180, 365, 730, 0)
-
 COL_PRESA = [("AvgH", "AvgD", "AvgA"), ("B365H", "B365D", "B365A"), ("PSH", "PSD", "PSA"), ("MaxH", "MaxD", "MaxA")]
 COL_CHIUSURA = [("PSCH", "PSCD", "PSCA"), ("AvgCH", "AvgCD", "AvgCA"), ("B365CH", "B365CD", "B365CA")]
-COL_OU_PRESA = [("Avg>2.5", "Avg<2.5"), ("B365>2.5", "B365<2.5"), ("P>2.5", "P<2.5"), ("Max>2.5", "Max<2.5")]
-COL_OU_CHIUSURA = [("AvgC>2.5", "AvgC<2.5"), ("PC>2.5", "PC<2.5"), ("B365C>2.5", "B365C<2.5")]
 STAT_COLONNE = {"Tiri": ("HS", "AS"), "Tiri in Porta": ("HST", "AST"), "Corner": ("HC", "AC"), "Falli": ("HF", "AF"), "Ammonizioni": ("HY", "AY")}
-
 SOGLIA_FIDUCIA_ALTA, SOGLIA_FIDUCIA_MEDIA, SOGLIA_FAVORITA_NETTA = 0.70, 0.55, 0.55
 SOGLIA_EQUILIBRIO_GAP, SOGLIA_EQUILIBRIO_X, SOGLIA_X_FORZATA = 0.08, 0.25, 0.30
 COL_PRIMARIO, COL_ACCENTO, COL_CASA, COL_TRASF = "#38bdf8", "#a855f7", "#38bdf8", "#f43f5e"
@@ -45,19 +40,13 @@ html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
 .stApp {{ background-color: #0b0f19; color: #f3f4f6; }}
 .block-container {{ padding-top: 1.5rem; padding-bottom: 3rem; max-width: 1250px; }}
 [data-testid="stSidebar"] {{ background-color: #111827; border-right: 1px solid #1f2937; }}
-.stButton>button {{ background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; border: none; border-radius: 10px; font-weight: 600; padding: 0.5rem 1rem; transition: all 0.2s; }}
-.stButton>button:hover {{ transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59,130,246,.4); }}
+.stButton>button {{ background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; border: none; border-radius: 10px; font-weight: 600; padding: 0.5rem 1rem; }}
 [data-testid="stMetric"] {{ background-color: #111827; border: 1px solid #1f2937; padding: 15px; border-radius: 12px; }}
 [data-testid="stMetricValue"] {{ color: {COL_PRIMARIO} !important; font-weight: 700 !important; }}
-div[data-testid="stExpander"] {{ border: 1px solid #1f2937; border-radius: 12px; }}
-.tooltip {{ position: relative; display: inline-block; cursor: help; color: #64748b; font-size: 0.8rem; margin-left: 4px; }}
-.tooltip .tooltiptext {{ visibility: hidden; width: 220px; background-color: #1e293b; color: #f8fafc; text-align: center; border-radius: 6px; padding: 8px; position: absolute; z-index: 1; bottom: 125%; left: 50%; margin-left: -110px; opacity: 0; transition: opacity 0.3s; font-size: 0.75rem; font-weight: normal; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #334155; }}
-.tooltip:hover .tooltiptext {{ visibility: visible; opacity: 1; }}
-@media (max-width: 768px) {{ .block-container {{ padding-top: 1rem; padding-left: 0.5rem; padding-right: 0.5rem; }} h1 {{ font-size: 1.5rem !important; }} h3 {{ font-size: 1.1rem !important; }} [data-testid="stMetricValue"] {{ font-size: 1.2rem !important; }} .stButton>button {{ width: 100%; }} .stDataFrame {{ font-size: 0.8rem; }} .tooltip .tooltiptext {{ width: 160px; margin-left: -80px; }} }}
+@media (max-width: 768px) {{ .block-container {{ padding: 1rem 0.5rem; }} h1 {{ font-size: 1.5rem !important; }} [data-testid="stMetricValue"] {{ font-size: 1.2rem !important; }} .stButton>button {{ width: 100%; }} }}
 </style>""", unsafe_allow_html=True)
 
-def tooltip_testo(testo): return f'<span class="tooltip">❓<span class="tooltiptext">{testo}</span></span>'
-st.markdown(f"""<div style="background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%); padding: 25px; border-radius: 20px; border: 1px solid #312e81; text-align: center; margin-bottom: 20px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.4);"><h1 style="color: #f8fafc; font-weight: 800; font-size: 2rem; margin: 0;">⚽ COMBO MASTER 5.1</h1><p style="color: #94a3b8; font-size: 0.95rem; margin-top: 8px;">Dixon-Coles + xG · Top Picks multi-campionato · tempi completi</p></div>""", unsafe_allow_html=True)
+st.markdown(f"""<div style="background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%); padding: 25px; border-radius: 20px; border: 1px solid #312e81; text-align: center; margin-bottom: 20px;"><h1 style="color: #f8fafc; font-weight: 800; font-size: 2rem; margin: 0;">⚽ COMBO MASTER 5.2</h1><p style="color: #94a3b8; font-size: 0.95rem; margin-top: 8px;">Dixon-Coles + xG · Schedina globale multi-campionato · tempi completi</p></div>""", unsafe_allow_html=True)
 
 _STOP_NOMI = {"fc", "ac", "as", "cf", "afc", "acf", "ssc", "us", "ud", "rc", "rcd", "sv", "vfl", "vfb", "fsv", "tsg", "fk", "cd", "ca", "sc", "bv", "de", "calcio", "ogc", "sco"}
 _ALIAS_NOMI = {"inter": "internazionale milano", "verona": "hellas verona", "man united": "manchester united", "man city": "manchester city", "nott m forest": "nottingham forest", "wolves": "wolverhampton wanderers", "ath madrid": "club atletico madrid", "ath bilbao": "athletic club", "espanol": "espanyol barcelona", "bayern munich": "bayern munchen", "m gladbach": "borussia monchengladbach", "ein frankfurt": "eintracht frankfurt", "paris sg": "paris saint germain", "lyon": "olympique lyonnais", "rennes": "stade rennais", "brest": "stade brestois", "for sittard": "fortuna sittard", "manchester city fc": "manchester city", "manchester united fc": "manchester united", "arsenal fc": "arsenal", "chelsea fc": "chelsea", "liverpool fc": "liverpool", "tottenham hotspur fc": "tottenham"}
@@ -78,8 +67,7 @@ def mappa_nomi(nomi_api, nomi_target):
     norm_t = {t: _norm_sq(t) for t in nomi_target}
     out = {}
     for n in nomi_api:
-        na = _norm_sq(n)
-        best, best_s = None, 0.0
+        na = _norm_sq(n); best, best_s = None, 0.0
         for t, nt in norm_t.items():
             s_ = _similarita(na, nt)
             if s_ > best_s: best, best_s = t, s_
@@ -95,15 +83,14 @@ def prima_tripla(riga, colonne):
     return None
 
 def _leggi_csv(url):
-    for t in range(3):
+    for _ in range(3):
         try:
             res = requests.get(url, timeout=TIMEOUT, headers=UA)
             if res.status_code == 200:
                 for enc in ("utf-8-sig", "latin-1"):
                     try:
                         d = pd.read_csv(io.BytesIO(res.content), encoding=enc, on_bad_lines="skip")
-                        d.columns = [str(c).strip().lstrip("\ufeff") for c in d.columns]
-                        return d, None
+                        d.columns = [str(c).strip().lstrip("\ufeff") for c in d.columns]; return d, None
                     except UnicodeDecodeError: continue
                     except Exception as e: return None, str(e)
             if res.status_code < 500 and res.status_code != 429: return None, str(res.status_code)
@@ -111,10 +98,8 @@ def _leggi_csv(url):
         time.sleep(2)
     return None, "Errore"
 
-METODO_MARGINE = {"m": "proporzionale"}
 def senza_margine(quote, metodo=None):
-    pi = 1.0 / np.asarray(quote, dtype=float)
-    return pi / pi.sum()
+    pi = 1.0 / np.asarray(quote, dtype=float); return pi / pi.sum()
 
 @st.cache_data(ttl=6*3600)
 def carica_storico(div, n, giorno):
@@ -128,21 +113,20 @@ def carica_storico(div, n, giorno):
         d["Stag"] = d["Date"].dt.year
         d = d[d["Stag"].isin(sorted(d["Stag"].unique())[-n:])]
         return d.sort_values("Date").reset_index(drop=True)
-    else:
-        oggi = date.today(); anno = oggi.year if oggi.month >= 7 else oggi.year - 1
-        frames = []
-        for k in range(n):
-            y = anno - k; codice = f"{y%100:02d}{(y+1)%100:02d}"
-            d, _ = _leggi_csv(f"{BASE_URL}/mmz4281/{codice}/{div}.csv")
-            if d is not None and {"Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"}.issubset(d.columns):
-                d["Stag"] = y; frames.append(d)
-        if not frames: return None
-        df = pd.concat(frames, ignore_index=True)
-        df = df.dropna(subset=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]).copy()
-        df["Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce", format="mixed")
-        df = df.dropna(subset=["Date"])
-        df["FTHG"], df["FTAG"] = df["FTHG"].astype(int), df["FTAG"].astype(int)
-        return df.sort_values("Date").reset_index(drop=True)
+    oggi = date.today(); anno = oggi.year if oggi.month >= 7 else oggi.year - 1
+    frames = []
+    for k in range(n):
+        y = anno - k; codice = f"{y%100:02d}{(y+1)%100:02d}"
+        d, _ = _leggi_csv(f"{BASE_URL}/mmz4281/{codice}/{div}.csv")
+        if d is not None and {"Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"}.issubset(d.columns):
+            d["Stag"] = y; frames.append(d)
+    if not frames: return None
+    df = pd.concat(frames, ignore_index=True)
+    df = df.dropna(subset=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]).copy()
+    df["Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce", format="mixed")
+    df = df.dropna(subset=["Date"])
+    df["FTHG"], df["FTAG"] = df["FTHG"].astype(int), df["FTAG"].astype(int)
+    return df.sort_values("Date").reset_index(drop=True)
 
 @st.cache_data(ttl=3600)
 def carica_fixtures(div):
@@ -154,23 +138,13 @@ def carica_fixtures(div):
     return d.reset_index(drop=True), None
 
 @st.cache_data(ttl=3600)
-def scarica_calendario_api(chiave, codice):
-    if not chiave: return None
-    try:
-        res = requests.get(f"https://api.football-data.org/v4/competitions/{codice}/matches", headers={"X-Auth-Token": chiave}, timeout=TIMEOUT)
-        if res.status_code == 200: return res.json()
-    except: pass
-    return None
-
-@st.cache_data(ttl=3600)
 def carica_calendario_extra_da_odds(api_key, league_code):
     if not api_key or league_code not in ODDS_API_KEYS: return pd.DataFrame()
     sport_key = ODDS_API_KEYS[league_code]
     try:
         res = requests.get(f"https://api.the-odds-api.com/v4/sports/{sport_key}/events?apiKey={api_key}", timeout=TIMEOUT)
         if res.status_code == 200:
-            righe = []
-            oggi = date.today()
+            righe = []; oggi = date.today()
             for ev in res.json():
                 ts = pd.to_datetime(ev["commence_time"], utc=True).tz_convert("Europe/Rome")
                 if ts.date() >= oggi: righe.append({"Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": ev["home_team"], "Trasferta": ev["away_team"], "Stato": "SCHEDULED", "Giornata": 0})
@@ -186,18 +160,23 @@ def assegna_giornate(righe):
     return righe
 
 def costruisci_calendario(div, df_storico, fx, chiave, squadre_modello):
-    dati = scarica_calendario_api(chiave, API_CODICI[div]) if chiave and div in API_CODICI else None
-    if dati and dati.get("matches"):
-        nomi = {m["homeTeam"]["name"] for m in dati["matches"]} | {m["awayTeam"]["name"] for m in dati["matches"]}
-        mp = mappa_nomi(list({n for n in nomi if n}), squadre_modello)
-        righe = []
-        for m in dati["matches"]:
-            h, a = m["homeTeam"].get("name"), m["awayTeam"].get("name")
-            if h and a:
-                ft = (m.get("score") or {}).get("fullTime") or {}
-                ts = pd.to_datetime(m["utcDate"], utc=True).tz_convert("Europe/Rome")
-                righe.append({"Giornata": m.get("matchday") or 0, "Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": mp.get(h, h), "Trasferta": mp.get(a, a), "GolC": ft.get("home"), "GolT": ft.get("away"), "Stato": m.get("status", "")})
-        return pd.DataFrame(righe), "API"
+    if chiave and div in API_CODICI:
+        try:
+            res = requests.get(f"https://api.football-data.org/v4/competitions/{API_CODICI[div]}/matches", headers={"X-Auth-Token": chiave}, timeout=TIMEOUT)
+            if res.status_code == 200:
+                dati = res.json()
+                if dati.get("matches"):
+                    nomi = {m["homeTeam"]["name"] for m in dati["matches"]} | {m["awayTeam"]["name"] for m in dati["matches"]}
+                    mp = mappa_nomi(list({n for n in nomi if n}), squadre_modello)
+                    righe = []
+                    for m in dati["matches"]:
+                        h, a = m["homeTeam"].get("name"), m["awayTeam"].get("name")
+                        if h and a:
+                            ft = (m.get("score") or {}).get("fullTime") or {}
+                            ts = pd.to_datetime(m["utcDate"], utc=True).tz_convert("Europe/Rome")
+                            righe.append({"Giornata": m.get("matchday") or 0, "Data": ts.strftime("%Y-%m-%d"), "Ora": ts.strftime("%H:%M"), "Casa": mp.get(h, h), "Trasferta": mp.get(a, a), "GolC": ft.get("home"), "GolT": ft.get("away"), "Stato": m.get("status", "")})
+                    return pd.DataFrame(righe), "API"
+        except: pass
     righe = []
     stag = df_storico[df_storico["Stag"] == df_storico["Stag"].max()]
     for _, r in stag.iterrows():
@@ -230,8 +209,7 @@ def carica_storico_intl(chiave, fd_id, n, giorno):
                 if righe: frames.append(pd.DataFrame(righe))
         except: pass
         time.sleep(6)
-    if not frames: return None
-    return pd.concat(frames, ignore_index=True).sort_values("Date").reset_index(drop=True)
+    return pd.concat(frames, ignore_index=True).sort_values("Date").reset_index(drop=True) if frames else None
 
 @st.cache_data(ttl=3600)
 def carica_odds_api(api_key, sport_key):
@@ -349,19 +327,18 @@ def matrice_ancorata(p1x2, rho, start):
     res = minimize(err, np.log(np.asarray(start, float)), method="Nelder-Mead")
     return matrice_punteggi(math.exp(res.x[0]), math.exp(res.x[1]), rho)
 
-def scegli_parametri(df):
-    if df is None or df["Stag"].nunique() < 2: return {"ridge": 2.0, "halflife": 365}
-    ric = []
-    for r in RIDGE_GRID:
-        for h in HALFLIFE_GRID:
-            m = adatta_modello(df, df["Date"].max(), r, h)
-            lh, la = lambda_partita(m, df["HomeTeam"].iloc[-1], df["AwayTeam"].iloc[-1])
-            # stima veloce (approssimativa, usiamo la log-likelihood)
-            ric.append((r, h))
-    return {"ridge": 2.0, "halflife": 365}
+@st.cache_data(ttl=6*3600, show_spinner=False)
+def modello_squadre(div, giorno):
+    df = carica_storico(div, N_STAGIONI, giorno)
+    if df is None or len(df) < 50: return None
+    return adatta_modello(df, pd.Timestamp.now().normalize(), 2.0, 365)
 
-@st.cache_data(ttl=6*3600)
-def parametri_auto(div, giorno): return scegli_parametri(carica_storico(div, N_STAGIONI, giorno))
+@st.cache_data(ttl=6*3600, show_spinner=False)
+def modello_intl(fd_id, k_fd, giorno):
+    if not k_fd: return None
+    df = carica_storico_intl(k_fd, fd_id, N_STAGIONI, giorno)
+    if df is None or len(df) < 30: return None
+    return adatta_modello(df, pd.Timestamp.now().normalize(), 2.0, 365)
 
 _ESITI_MASK = {"1": _MASK["p1"], "X": _MASK["px"], "2": _MASK["p2"], "1X": _MASK["p1"]|_MASK["px"], "X2": _MASK["px"]|_MASK["p2"], "12": _MASK["p1"]|_MASK["p2"]}
 _MERC_MASK = {"Goal": _MASK["btts"], "No Goal": ~_MASK["btts"], "Over 1.5": _MASK["over1.5"], "Under 1.5": ~_MASK["over1.5"], "Over 2.5": _MASK["over2.5"], "Under 2.5": ~_MASK["over2.5"], "Over 3.5": _MASK["over3.5"], "Under 3.5": ~_MASK["over3.5"]}
@@ -403,11 +380,11 @@ def _sopra_media(finestre, freq, chiave_fn):
 def giocata_consigliata(pr):
     pp = pr["p"]; gap12 = abs(pp["1"] - pp["2"]) * 100
     equilibrata = gap12 <= SOGLIA_EQUILIBRIO_GAP * 100 and pp["X"] >= SOGLIA_EQUILIBRIO_X
-    if pr.get("x_regola"): return "X", f"X al {pp['X']*100:.0f}%", "soglia X superata"
+    if pr.get("x_regola"): return "X", f"X al {pp['X']*100:.0f}%", "soglia X"
     if equilibrata and pp["X"] >= SOGLIA_X_FORZATA: return "X", f"X al {pp['X']*100:.0f}%", "pareggio concreto"
     if equilibrata: return pr["doppia_x_best"], f"{pr['doppia_x_best']} al {pp[pr['doppia_x_best']]*100:.0f}%", "equilibrata"
     p_fav = max(pp["1"], pp["2"]); chiave = "1" if pp["1"] > pp["2"] else "2"
-    return chiave, f"{chiave} al {p_fav*100:.0f}%", "favorita netta" if p_fav >= SOGLIA_FAVORITA_NETTA else "favorita debole"
+    return chiave, f"{chiave} al {p_fav*100:.0f}%", "favorita" if p_fav >= SOGLIA_FAVORITA_NETTA else "favorita debole"
 
 def tabelle_pronostico(M1x2, Mgol, freq=None):
     Mj = matrice_congiunta(M1x2, Mgol); p = {k: float(M1x2[m].sum()) for k, m in _ESITI_MASK.items()}; out = {"p": p}
@@ -415,30 +392,10 @@ def tabelle_pronostico(M1x2, Mgol, freq=None):
     out["pronostico"] = best; out["doppia_x_best"] = max(("1X", "X2"), key=lambda k: p[k])
     out["doppie"] = pd.DataFrame([_riga_prob(k, p[k], freq) for k in ("1X", "X2", "12")])
     out["doppia_best"] = max(("1X", "X2", "12"), key=lambda k: p[k])
-    def combo(esiti, mercati):
-        righe = [(f"{e} + {m}", float(Mj[_ESITI_MASK[e] & _MERC_MASK[m]].sum())) for e in esiti for m in mercati]
-        return pd.DataFrame([_riga_prob(l, v, freq) for l, v in sorted(righe, key=lambda r: -r[1])])
-    out["combo_goal"] = combo(("1", "X", "2"), ("Goal", "No Goal")); out["combo_ou"] = combo(("1", "X", "2"), ("Over 2.5", "Under 2.5"))
-    out["combo_doppie"] = combo(("1X", "X2", "12"), ("Goal", "No Goal", "Over 2.5", "Under 2.5")); out["combo_ou_linee"] = combo(("1", "X", "2"), LINEE_OU)
     out["multigol_tot"] = pd.DataFrame([_riga_prob(f"{a}-{b} gol", Mgol[(_TOT >= a) & (_TOT <= b)].sum(), freq) for a, b in [(1, 2), (1, 3), (1, 4), (1, 5), (2, 3), (2, 4), (2, 5), (3, 5), (3, 6)]])
     larghi3 = {f"{a}-{b}": float(Mgol[(_TOT >= a) & (_TOT <= b)].sum()) for a, b in [(1, 3), (2, 4), (3, 5)]}
     out["multigol_best"], out["multigol_best_p"], out["multigol_best_f"] = _sopra_media(larghi3, freq, lambda k: f"{k} gol")
     return out
-
-def tabella_split(df, s=10.0):
-    S = np.zeros((11, 11)); pi = 0.45; d = None
-    if {"HTHG", "HTAG"}.issubset(df.columns):
-        d = df.dropna(subset=["HTHG", "HTAG"])
-        if len(d) < 100: d = None
-    if d is not None:
-        ft, h1 = (d["FTHG"]+d["FTAG"]).to_numpy(int), (d["HTHG"]+d["HTAG"]).to_numpy(int)
-        pi = float(min(max(h1.sum() / max(ft.sum(), 1), 0.3), 0.6))
-    for t in range(11):
-        prior = np.array([math.comb(t, k) * pi**k * (1-pi)**(t-k) for k in range(t+1)])
-        if d is None: S[t, :t+1] = prior; continue
-        m = ft == t; counts = np.bincount(np.clip(h1[m], 0, t), minlength=t+1)[:t+1].astype(float)
-        S[t, :t+1] = (counts + s*prior) / (m.sum() + s)
-    return S
 
 def quote_pt(df):
     if df is None or "HTHG" not in df.columns: return 0.45, 0.45
@@ -479,8 +436,7 @@ def esatti_per_tempo(M, df, quanti=4):
     if df is None or "HTHG" not in df.columns: return None
     d = df.dropna(subset=["HTHG", "HTAG"])
     if len(d) < 100 or d["FTHG"].sum() == 0: return None
-    fc, ft = quote_pt(df)
-    h1h, h2h = np.zeros((6, 6)), np.zeros((6, 6))
+    fc, ft = quote_pt(df); h1h, h2h = np.zeros((6, 6)), np.zeros((6, 6))
     for r in d.itertuples():
         h1h[min(int(r.HTHG), 5), min(int(r.HTAG), 5)] += 1
         h2h[min(int(r.FTHG - r.HTHG), 5), min(int(r.FTAG - r.HTAG), 5)] += 1
@@ -499,11 +455,6 @@ def esatti_per_tempo(M, df, quanti=4):
         if best: riga["Sorpresa"] = f"{best[0]}-{best[1]} ({best[2]*100:.0f}% vs {best[3]*100:.0f}%)"
         righe.append(riga)
     return righe
-
-def crea_radar_chart(c, t, r):
-    cats = list(r.keys()); vc, vt = [round(r[x][0]/max(r[x][0], r[x][1], 0.1)*100, 1) for x in cats], [round(r[x][1]/max(r[x][0], r[x][1], 0.1)*100, 1) for x in cats]
-    fig = go.Figure([go.Scatterpolar(r=vc+[vc[0]], theta=cats+[cats[0]], fill='toself', name=c, line=dict(color=COL_CASA)), go.Scatterpolar(r=vt+[vt[0]], theta=cats+[cats[0]], fill='toself', name=t, line=dict(color=COL_TRASF))])
-    fig.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 100])), template="plotly_dark", height=400, margin=dict(l=40, r=40, t=40, b=20)); return fig
 
 def ultimi_5(df, sq):
     d = df[(df["HomeTeam"] == sq) | (df["AwayTeam"] == sq)].sort_values("Date").tail(5)
@@ -549,19 +500,12 @@ k_od = st.sidebar.text_input("🔑 The Odds API", value=_k_od, type="password")
 
 tipo = st.sidebar.radio("Competizione", ["Principali", "Extra", "Internazionali"])
 
-# FIX SELEZIONE CAMPIONATO
 if tipo == "Principali":
-    camp = st.selectbox("Torneo", list(LEAGUES.keys()), key="sel_princ")
-    div = LEAGUES[camp]
-    is_i, is_e = False, False
+    camp = st.selectbox("Torneo", list(LEAGUES.keys()), key="sel_princ"); div = LEAGUES[camp]; is_i, is_e = False, False
 elif tipo == "Extra":
-    camp = st.selectbox("Torneo", list(EXTRA_LEAGUES.keys()), key="sel_extra")
-    div = EXTRA_LEAGUES[camp]
-    is_i, is_e = False, True
+    camp = st.selectbox("Torneo", list(EXTRA_LEAGUES.keys()), key="sel_extra"); div = EXTRA_LEAGUES[camp]; is_i, is_e = False, True
 else:
-    camp = st.selectbox("Torneo", list(INTL_COMPS.keys()), key="sel_intl")
-    div = camp
-    is_i, is_e = True, False
+    camp = st.selectbox("Torneo", list(INTL_COMPS.keys()), key="sel_intl"); div = camp; is_i, is_e = True, False
 
 if "ultimo_camp" not in st.session_state or st.session_state["ultimo_camp"] != div:
     st.session_state["ultimo_camp"] = div
@@ -584,15 +528,15 @@ else:
     df_s = carica_storico(div, N_STAGIONI, giorno); qf = {}
 
 if df_s is None or len(df_s) < 50: st.warning("Dati insufficienti per questo campionato."); st.stop()
-par = parametri_auto(div, giorno) if not is_i and not is_e else {"ridge": 2.0, "halflife": 365}
-mod = adatta_modello(df_s, pd.Timestamp.now().normalize(), par["ridge"], par["halflife"])
+mod = modello_squadre(div, giorno) if not is_i else modello_intl(INTL_COMPS[camp]["fd_id"], k_fd, giorno)
+if mod is None: mod = adatta_modello(df_s, pd.Timestamp.now().normalize(), 2.0, 365)
 mxg = None
 if not is_i and not is_e and div in LEAGUES_XG:
     df_x = carica_xg_storico(div, giorno)
-    if df_x is not None: mxg = adatta_modello(df_x.assign(FTHG=df_x["xGH"].round().astype(int), FTAG=df_x["xGA"].round().astype(int)), pd.Timestamp.now().normalize(), par["ridge"], par["halflife"])
+    if df_x is not None: mxg = adatta_modello(df_x.assign(FTHG=df_x["xGH"].round().astype(int), FTAG=df_x["xGA"].round().astype(int)), pd.Timestamp.now().normalize(), 2.0, 365)
 
 if is_i:
-    cal = pd.DataFrame(); 
+    cal = pd.DataFrame()
     if k_fd:
         res = requests.get(f"https://api.football-data.org/v4/competitions/{INTL_COMPS[camp]['fd_id']}/matches?status=SCHEDULED", headers={"X-Auth-Token": k_fd})
         if res.status_code == 200:
@@ -602,21 +546,67 @@ elif not is_e:
 
 Mfreq = matrice_frequenze(df_s); fc = frequenze_combo(df_s)
 
-tabs = st.tabs(["📅 Calendario", "📋 Pronostici", "🏆 Classifica", "⚡ Value Finder", "🌍 Top Picks", "🎲 Monte Carlo", "📄 Report", "🧮 Kelly"])
+# ===== SCHEDINA GLOBALE MULTI-CAMPIONATO =====
+def schedina_globale(data_target, giorno, k_fd, k_od):
+    risultati = []
+    for nome, code in LEAGUES.items():
+        try:
+            mod_x = modello_squadre(code, giorno)
+            if mod_x is None: continue
+            df_x = carica_storico(code, N_STAGIONI, giorno); Mf_x = matrice_frequenze(df_x)
+            fx, _ = carica_fixtures(code); cal_x, _ = costruisci_calendario(code, df_x, fx, k_fd, mod_x["squadre"])
+            if cal_x.empty: continue
+            for _, r in cal_x[cal_x["Data"] == data_target].iterrows():
+                D = distribuzione_live(r["Casa"], r["Trasferta"], mod_x, {"gol":0.5,"esatto":0.75}, Mf_x, {}, None)
+                pr = tabelle_pronostico(D["M_1x2"], D["M_gol"]); cg, _, _ = giocata_consigliata(pr); p = pr["p"][cg]
+                risultati.append({"Tipo": "Principale", "Campionato": nome, "Ora": r.get("Ora",""), "Partita": f"{r['Casa']} - {r['Trasferta']}", "Giocata": NOMI_SCELTA[cg], "Prob %": round(p*100,1), "Quota Equa": round(1/p,2) if p>0 else None})
+        except: continue
+    for nome, code in EXTRA_LEAGUES.items():
+        try:
+            mod_x = modello_squadre(code, giorno)
+            if mod_x is None: continue
+            df_x = carica_storico(code, N_STAGIONI, giorno); Mf_x = matrice_frequenze(df_x)
+            cal_x = carica_calendario_extra_da_odds(k_od, code)
+            if cal_x.empty: continue
+            sq = sorted(set(df_x["HomeTeam"]) | set(df_x["AwayTeam"]))
+            for _, r in cal_x[cal_x["Data"] == data_target].iterrows():
+                mp = mappa_nomi([r["Casa"], r["Trasferta"]], sq)
+                D = distribuzione_live(mp.get(r["Casa"], r["Casa"]), mp.get(r["Trasferta"], r["Trasferta"]), mod_x, {"gol":0.5,"esatto":0.75}, Mf_x, {}, None)
+                pr = tabelle_pronostico(D["M_1x2"], D["M_gol"]); cg, _, _ = giocata_consigliata(pr); p = pr["p"][cg]
+                risultati.append({"Tipo": "Extra", "Campionato": nome, "Ora": r.get("Ora",""), "Partita": f"{r['Casa']} - {r['Trasferta']}", "Giocata": NOMI_SCELTA[cg], "Prob %": round(p*100,1), "Quota Equa": round(1/p,2) if p>0 else None})
+        except: continue
+    for nome, info in INTL_COMPS.items():
+        try:
+            mod_x = modello_intl(info["fd_id"], k_fd, giorno)
+            if mod_x is None or not k_fd: continue
+            df_x = carica_storico_intl(k_fd, info["fd_id"], N_STAGIONI, giorno); Mf_x = matrice_frequenze(df_x)
+            try:
+                res = requests.get(f"https://api.football-data.org/v4/competitions/{info['fd_id']}/matches?status=SCHEDULED", headers={"X-Auth-Token": k_fd}, timeout=TIMEOUT)
+                if res.status_code != 200: continue
+                sq = sorted(set(df_x["HomeTeam"]) | set(df_x["AwayTeam"]))
+                for m in res.json().get("matches", []):
+                    dt = pd.to_datetime(m["utcDate"]).tz_convert("Europe/Rome")
+                    if dt.strftime("%Y-%m-%d") != data_target: continue
+                    mp = mappa_nomi([m["homeTeam"]["name"], m["awayTeam"]["name"]], sq)
+                    D = distribuzione_live(mp.get(m["homeTeam"]["name"], m["homeTeam"]["name"]), mp.get(m["awayTeam"]["name"], m["awayTeam"]["name"]), mod_x, {"gol":0.5,"esatto":0.75}, Mf_x, {}, None)
+                    pr = tabelle_pronostico(D["M_1x2"], D["M_gol"]); cg, _, _ = giocata_consigliata(pr); p = pr["p"][cg]
+                    risultati.append({"Tipo": "Internazionale", "Campionato": nome, "Ora": dt.strftime("%H:%M"), "Partita": f"{m['homeTeam']['name']} - {m['awayTeam']['name']}", "Giocata": NOMI_SCELTA[cg], "Prob %": round(p*100,1), "Quota Equa": round(1/p,2) if p>0 else None})
+            except: continue
+        except: continue
+    return pd.DataFrame(risultati)
+
+tabs = st.tabs(["📅 Calendario", "📋 Pronostici", "🏆 Classifica", "⚡ Value Finder", "🌍 Top Picks", "🎲 Monte Carlo", "📄 Report", "🧮 Kelly", "🎯 Schedina Globale"])
 
 def mostra(c, t, d, o):
-    D = distribuzione_live(c, t, mod, {"gol":0.5, "esatto":0.75}, Mfreq, qf, mxg); lh, la = gol_attesi(D["M_gol"]); M = D["M_es"]; mk, mg = mercati(D["M_1x2"]), mercati(D["M_gol"]); pr = tabelle_pronostico(D["M_1x2"], D["M_gol"], fc)
+    D = distribuzione_live(c, t, mod, {"gol":0.5,"esatto":0.75}, Mfreq, qf, mxg); lh, la = gol_attesi(D["M_gol"]); M = D["M_es"]; mk, mg = mercati(D["M_1x2"]), mercati(D["M_gol"]); pr = tabelle_pronostico(D["M_1x2"], D["M_gol"], fc)
     st.markdown(f"<div style='background:#111827;padding:18px;border-radius:12px;margin-bottom:12px;display:flex;justify-content:space-between;'><b>{c} vs {t}</b><span>📅 {d} {o}</span></div>", unsafe_allow_html=True)
     pp = pr["p"]; cg, _, _ = giocata_consigliata(pr); top = pr["pronostico"]
     st.success(f"**🎯 GIOCATA: {NOMI_SCELTA[cg]}** — {pp[top]*100:.1f}%\n\n*{NOMI_ESITO[top]}*")
     if st.button("🧮 Kelly"): st.session_state["kp"], st.session_state["kq"] = pp[cg]*100, round(1/pp[cg], 2)
-    
     st.markdown(f"**Forma**\n{c}: {' '.join(ultimi_5(df_s, c))}\n{t}: {' '.join(ultimi_5(df_s, t))}")
     a, b, x = st.columns(3); a.metric("1", f"{mk['p1']*100:.1f}%"); b.metric("X", f"{mk['px']*100:.1f}%"); x.metric("2", f"{mk['p2']*100:.1f}%")
-    
-    st.markdown("---")
-    st.markdown("### ⏱️ Tempi")
-    if is_i or is_e: st.info("Dati tempi non disponibili per questa competizione.")
+    st.markdown("---"); st.markdown("### ⏱️ Tempi")
+    if is_i or is_e: st.info("Dati tempi non disponibili.")
     else:
         T = tabelle_tempi_complete(D["M_gol"], df_s)
         col1, col2 = st.columns(2)
@@ -639,7 +629,7 @@ with tabs[0]:
 with tabs[1]:
     rp = []
     for _, r in cal.iterrows():
-        D = distribuzione_live(r["Casa"], r["Trasferta"], mod, {"gol":0.5, "esatto":0.75}, Mfreq, qf, mxg); p = tabelle_pronostico(D["M_1x2"], D["M_gol"], fc); cg, _, _ = giocata_consigliata(p)
+        D = distribuzione_live(r["Casa"], r["Trasferta"], mod, {"gol":0.5,"esatto":0.75}, Mfreq, qf, mxg); p = tabelle_pronostico(D["M_1x2"], D["M_gol"], fc); cg, _, _ = giocata_consigliata(p)
         rp.append({"Sel": False, "Data": r["Data"], "Partita": f"{r['Casa']}-{r['Trasferta']}", "Giocata": NOMI_SCELTA[cg], "Prob %": round(p["p"][cg]*100, 1), "Quota Equa": round(1/p["p"][cg], 2)})
     if rp:
         ed = st.data_editor(pd.DataFrame(rp), column_config={"Sel": st.column_config.CheckboxColumn(default=False)}, disabled=["Data","Partita","Giocata","Prob %","Quota Equa"])
@@ -660,14 +650,14 @@ with tabs[3]:
     if rv: df_val = pd.DataFrame(rv).sort_values("Edge", ascending=False); st.dataframe(df_val)
 
 with tabs[4]:
-    if st.button("Scansiona"):
+    if st.button("Scansiona Top Picks"):
         tp = []
-        for cp, dc in list(LEAGUES.items()) + list(EXTRA_LEAGUES.items()) + [(k, v["fd_id"]) for k, v in INTL_COMPS.items()]:
-            ok = ODDS_API_MAIN.get(dc) if cp in LEAGUES else (ODDS_API_KEYS.get(dc) if cp in EXTRA_LEAGUES else INTL_COMPS[cp]["odds_key"])
+        for cp, dc in list(LEAGUES.items()) + list(EXTRA_LEAGUES.items()):
+            ok = ODDS_API_MAIN.get(dc) if cp in LEAGUES else ODDS_API_KEYS.get(dc)
             if not ok: continue
             qr = carica_odds_api(k_od, ok)
             if not qr: continue
-            df_sm = carica_storico(dc, N_STAGIONI, giorno) if cp not in INTL_COMPS else carica_storico_intl(k_fd, dc, N_STAGIONI, giorno)
+            df_sm = carica_storico(dc, N_STAGIONI, giorno)
             if df_sm is None: continue
             msm = adatta_modello(df_sm, pd.Timestamp.now().normalize(), 2.0, 365)
             sq_mod = sorted(set(df_sm["HomeTeam"]) | set(df_sm["AwayTeam"]))
@@ -678,7 +668,7 @@ with tabs[4]:
                 mk = mercati(matrice_punteggi(*lambda_partita(msm, mh, ma), msm["rho"])); P = np.array([mk["p1"], mk["px"], mk["p2"]])
                 for k in range(3):
                     e = (P[k]*q[k]-1)*100
-                    if e >= 3: tp.append({"Campionato": cp, "Partita": f"{mh}-{ma}", "Edge": round(e,1)})
+                    if e >= 3: tp.append({"Campionato": cp, "Partita": f"{mh}-{ma}", "Sel": ["1","X","2"][k], "Prob": round(P[k]*100,1), "Quota": round(q[k],2), "Edge": round(e,1)})
         if tp: st.dataframe(pd.DataFrame(tp).sort_values("Edge", ascending=False))
 
 with tabs[5]:
@@ -696,3 +686,32 @@ with tabs[6]:
 with tabs[7]:
     p = st.slider("Prob %", 1, 100, int(st.session_state.get("kp", 45))); q = st.number_input("Quota", 1.01, 50.0, float(st.session_state.get("kq", 2.0))); b = 1000.0
     st.metric("Kelly", f"€{max(0, ((q-1)*(p/100) - (1-p/100)) / (q-1)) * 0.25 * b:.2f}")
+
+with tabs[8]:
+    st.subheader("🎯 Schedina Globale per Data")
+    st.markdown("Trova **tutte le giocate consigliate** per una data specifica, in **tutti i campionati** supportati (principali + extra + internazionali).")
+    data_sel = st.date_input("Data della schedina", value=date.today() + pd.Timedelta(days=1))
+    data_str = data_sel.strftime("%Y-%m-%d")
+    tipi_f = st.multiselect("Tipi di campionato", ["Principale", "Extra", "Internazionale"], default=["Principale", "Extra", "Internazionale"])
+    if st.button("🔍 Cerca in tutti i campionati", key="btn_scan_glob"):
+        with st.spinner(f"Scansiono tutti i campionati per il {data_str}... (30-60 secondi la prima volta)"):
+            df_g = schedina_globale(data_str, giorno, k_fd, k_od)
+        if df_g.empty:
+            st.warning(f"Nessuna partita trovata per il {data_str}. Prova un'altra data o verifica le chiavi API.")
+        else:
+            df_g = df_g[df_g["Tipo"].isin(tipi_f)].sort_values("Prob %", ascending=False).reset_index(drop=True)
+            st.success(f"📊 Trovate **{len(df_g)} partite** per il {data_str}")
+            prob_min_g = st.slider("Probabilità minima (%)", 0, 100, 0, key="prob_min_glob")
+            df_f = df_g[df_g["Prob %"] >= prob_min_g].copy()
+            df_f.insert(0, "Sel", False)
+            ed = st.data_editor(df_f, column_config={"Sel": st.column_config.CheckboxColumn(default=False), "Prob %": st.column_config.NumberColumn(format="%.1f%%")}, disabled=[c for c in df_f.columns if c != "Sel"], hide_index=True, use_container_width=True)
+            sel = ed[ed["Sel"]]
+            if not sel.empty:
+                st.markdown("---")
+                prob_comb = np.prod(sel["Prob %"] / 100)
+                quota_tot = np.prod(sel["Quota Equa"].fillna(2.0))
+                m1, m2 = st.columns(2)
+                m1.metric("Quota Totale", f"{quota_tot:.2f}")
+                m2.metric("Probabilità Combinata", f"{prob_comb*100:.2f}%")
+                if len(sel) > 3: st.warning("⚠️ Multipla con molti eventi: la varianza è molto alta. Gioca responsabilmente.")
+                st.dataframe(sel[["Campionato", "Partita", "Giocata", "Prob %", "Quota Equa"]], use_container_width=True, hide_index=True)
